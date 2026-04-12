@@ -3,7 +3,7 @@
  * Manages user session, sends batched events, handles alarms.
  */
 
-const BACKEND_URL = 'https://your-api.shadow-auditor.com';
+const BACKEND_URL = '';
 const AI_DOMAINS = [
   'chat.openai.com', 'claude.ai', 'gemini.google.com',
   'copilot.microsoft.com', 'bard.google.com', 'poe.com',

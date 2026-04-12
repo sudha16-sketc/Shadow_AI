@@ -8,7 +8,7 @@ import { analyse } from './detectionEngine.js';
 
 // ─── Config ──────────────────────────────────────────────────────────────────
 
-const BACKEND_URL = 'https://your-api.shadow-auditor.com'; // Replace with real URL
+const BACKEND_URL = ''; 
 const TYPING_DEBOUNCE_MS = 1500;   // Wait 1.5s after last keystroke
 const MIN_TEXT_LENGTH = 20;        // Ignore very short inputs
 const HIGH_RISK_THRESHOLD = 70;    // Score >= this triggers modal
