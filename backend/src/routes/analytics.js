@@ -1,3 +1,4 @@
+// backend/src/routes/analytics.js
 /**
  * Shadow AI Auditor — Analytics Routes
  * Powers the dashboard charts and risk views.
@@ -105,7 +106,7 @@ router.get('/top-users', async (req, res) => {
         pipeline: [{ $project: { name: 1, email: 1, department: 1 } }],
       },
     },
-    { $unwind: { path: '$user', preserveNullAndEmpty: true } },
+    { $unwind: { path: '$user', preserveNullAndEmptyArrays: true } },
     {
       $project: {
         name:        '$user.name',

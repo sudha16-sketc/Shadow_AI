@@ -6,6 +6,7 @@ const navItems = [
   { path: '/events',    label: 'Events',      icon: '⚡' },
   { path: '/users',     label: 'Users',       icon: '◎' },
   { path: '/analytics', label: 'Analytics',   icon: '↗' },
+  { path: '/settings',  label: 'Settings',    icon: '⚙' },
 ];
 
 export default function Layout() {

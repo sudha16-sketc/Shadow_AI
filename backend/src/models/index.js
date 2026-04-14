@@ -1,3 +1,4 @@
+// backend/src/models/index.js
 /**
  * Shadow AI Auditor — Database Models (Mongoose)
  *

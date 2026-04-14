@@ -1,3 +1,4 @@
+// backend/src/routes/events.js
 /**
  * Shadow AI Auditor — Events Routes
  * POST /api/events       — single event from extension
@@ -36,7 +37,7 @@ router.post('/', async (req, res) => {
     await processEvent(data);
     res.status(202).json({ ok: true });
   } catch (err) {
-    if (err instanceof z.ZodError) return res.status(400).json({ error: err.errors });
+    if (err instanceof z.ZodError) return res.status(400).json({ error: err.errors[0]?.message ?? 'Validation error' });
     logger.error('Event POST error', err);
     res.status(500).json({ error: 'Internal error' });
   }

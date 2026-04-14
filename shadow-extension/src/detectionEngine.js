@@ -6,6 +6,8 @@
 
 // ─── Regex Pattern Library ───────────────────────────────────────────────────
 
+// shadow-extension/src/detectionEngine.js
+
 const PATTERNS = {
   // API Keys & Secrets
   AWS_ACCESS_KEY:    { re: /\bAKIA[0-9A-Z]{16}\b/g,                    score: 90, label: 'AWS Access Key' },

@@ -1,3 +1,4 @@
+// backend/src/middleware/auth.js
 import jwt from 'jsonwebtoken';
 const JWT_SECRET = process.env.JWT_SECRET ?? 'change-this-secret-in-production';
 

@@ -1,3 +1,5 @@
+// backend/src/services/alerting.js
+
 /**
  * Shadow AI Auditor — Alerting Service
  * Sends Slack webhooks and email notifications for HIGH risk events.

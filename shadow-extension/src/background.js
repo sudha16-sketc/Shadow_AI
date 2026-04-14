@@ -3,6 +3,8 @@
  * Manages user session, sends batched events, handles alarms.
  */
 
+// shadow-extension/src/background.js
+
 const BACKEND_URL = '';
 const AI_DOMAINS = [
   'chat.openai.com', 'claude.ai', 'gemini.google.com',

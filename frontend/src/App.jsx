@@ -6,6 +6,7 @@ import OverviewPage from './pages/Overview';
 import EventsPage from './pages/Events';
 import UsersPage from './pages/Users';
 import AnalyticsPage from './pages/Analytics';
+import SettingsPage from './pages/Settings';
 
 function PrivateRoute({ children }) {
   const token = useAuthStore(s => s.token);
@@ -27,6 +28,7 @@ export default function App() {
           <Route path="events"    element={<EventsPage />} />
           <Route path="users"     element={<UsersPage />} />
           <Route path="analytics" element={<AnalyticsPage />} />
+          <Route path="settings"  element={<SettingsPage />} />
         </Route>
       </Routes>
     </BrowserRouter>

@@ -1,0 +1,257 @@
+
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>Shadow AI Auditor</title>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+
+    body {
+      width: 300px;
+      background: #0d0d14;
+      color: #e2e2f0;
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+      font-size: 13px;
+    }
+
+    /* ── Header ── */
+    .header {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      padding: 14px 16px;
+      border-bottom: 1px solid rgba(255,255,255,0.07);
+    }
+    .logo {
+      width: 28px; height: 28px;
+      background: rgba(239,68,68,0.15);
+      border: 1px solid rgba(239,68,68,0.3);
+      border-radius: 8px;
+      display: flex; align-items: center; justify-content: center;
+      font-size: 14px; flex-shrink: 0;
+    }
+    .title { font-size: 13px; font-weight: 600; color: #fff; line-height: 1.2; }
+    .subtitle { font-size: 10px; color: #6b6b80; }
+
+    /* ── Status ── */
+    .status-row {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 12px 16px;
+      border-bottom: 1px solid rgba(255,255,255,0.05);
+    }
+    .status-label { font-size: 12px; color: #9494a8; }
+    .status-badge {
+      display: flex; align-items: center; gap: 5px;
+      font-size: 11px; font-weight: 600;
+    }
+    .dot {
+      width: 6px; height: 6px; border-radius: 50%;
+    }
+    .dot-green { background: #22c55e; animation: pulse 2s infinite; }
+    .dot-gray  { background: #4b4b60; }
+    @keyframes pulse { 0%,100%{opacity:1} 50%{opacity:0.4} }
+
+    /* ── Toggle ── */
+    .toggle-row {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 12px 16px;
+      border-bottom: 1px solid rgba(255,255,255,0.05);
+    }
+    .toggle-info .label { font-size: 12px; color: #e2e2f0; font-weight: 500; }
+    .toggle-info .hint  { font-size: 10px; color: #6b6b80; margin-top: 2px; }
+
+    .switch {
+      position: relative; width: 36px; height: 20px; flex-shrink: 0;
+    }
+    .switch input { opacity: 0; width: 0; height: 0; }
+    .slider {
+      position: absolute; inset: 0;
+      background: rgba(255,255,255,0.1);
+      border-radius: 20px;
+      cursor: pointer;
+      transition: background 0.2s;
+    }
+    .slider::before {
+      content: '';
+      position: absolute;
+      width: 14px; height: 14px;
+      left: 3px; top: 3px;
+      background: #fff;
+      border-radius: 50%;
+      transition: transform 0.2s;
+    }
+    input:checked + .slider { background: #6366f1; }
+    input:checked + .slider::before { transform: translateX(16px); }
+
+    /* ── Stats ── */
+    .stats {
+      display: grid;
+      grid-template-columns: 1fr 1fr 1fr;
+      gap: 1px;
+      background: rgba(255,255,255,0.05);
+      border-top: 1px solid rgba(255,255,255,0.05);
+      border-bottom: 1px solid rgba(255,255,255,0.05);
+    }
+    .stat {
+      background: #0d0d14;
+      padding: 10px 8px;
+      text-align: center;
+    }
+    .stat-val { font-size: 18px; font-weight: 700; color: #fff; line-height: 1; }
+    .stat-val.red    { color: #ef4444; }
+    .stat-val.amber  { color: #f59e0b; }
+    .stat-val.green  { color: #22c55e; }
+    .stat-lab { font-size: 9px; color: #6b6b80; margin-top: 3px; text-transform: uppercase; letter-spacing: 0.05em; }
+
+    /* ── Current site ── */
+    .site-row {
+      padding: 10px 16px;
+      border-bottom: 1px solid rgba(255,255,255,0.05);
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+    }
+    .site-label { font-size: 11px; color: #6b6b80; }
+    .site-name {
+      font-size: 11px; font-weight: 500;
+      padding: 2px 8px; border-radius: 20px;
+    }
+    .site-monitored {
+      background: rgba(239,68,68,0.12);
+      color: #f87171;
+      border: 1px solid rgba(239,68,68,0.2);
+    }
+    .site-safe {
+      background: rgba(34,197,94,0.1);
+      color: #4ade80;
+      border: 1px solid rgba(34,197,94,0.2);
+    }
+
+    /* ── User ID ── */
+    .uid-row {
+      padding: 10px 16px;
+      border-bottom: 1px solid rgba(255,255,255,0.05);
+    }
+    .uid-label { font-size: 10px; color: #6b6b80; margin-bottom: 4px; }
+    .uid-val {
+      font-family: 'Courier New', monospace;
+      font-size: 11px; color: #818cf8;
+      background: rgba(99,102,241,0.08);
+      border: 1px solid rgba(99,102,241,0.15);
+      border-radius: 6px;
+      padding: 5px 8px;
+      display: flex; align-items: center; justify-content: space-between;
+    }
+    .copy-btn {
+      font-size: 10px; color: #6b6b80; cursor: pointer;
+      background: none; border: none; padding: 0;
+      transition: color 0.15s;
+    }
+    .copy-btn:hover { color: #818cf8; }
+
+    /* ── Footer ── */
+    .footer {
+      padding: 10px 16px;
+      display: flex; gap: 6px;
+    }
+    .btn {
+      flex: 1; padding: 7px 10px;
+      border-radius: 8px; font-size: 11px; font-weight: 500;
+      cursor: pointer; border: none; transition: all 0.15s;
+      font-family: inherit;
+    }
+    .btn-secondary {
+      background: rgba(255,255,255,0.06);
+      color: #9494a8;
+      border: 1px solid rgba(255,255,255,0.08);
+    }
+    .btn-secondary:hover { background: rgba(255,255,255,0.10); color: #e2e2f0; }
+    .btn-primary {
+      background: #6366f1;
+      color: #fff;
+    }
+    .btn-primary:hover { background: #4f46e5; }
+
+    .version { text-align: center; font-size: 9px; color: #3a3a50; padding-bottom: 8px; }
+  </style>
+</head>
+<body>
+
+  <!-- Header -->
+  <div class="header">
+    <div class="logo">⚔</div>
+    <div>
+      <div class="title">Shadow AI Auditor</div>
+      <div class="subtitle">Data Leak Prevention</div>
+    </div>
+  </div>
+
+  <!-- Active status -->
+  <div class="status-row">
+    <span class="status-label">Extension status</span>
+    <span class="status-badge" id="status-badge">
+      <span class="dot dot-green" id="status-dot"></span>
+      <span id="status-text">Active</span>
+    </span>
+  </div>
+
+  <!-- Monitoring toggle -->
+  <div class="toggle-row">
+    <div class="toggle-info">
+      <div class="label">Monitoring</div>
+      <div class="hint">Detect sensitive data on AI sites</div>
+    </div>
+    <label class="switch">
+      <input type="checkbox" id="monitoring-toggle" checked />
+      <span class="slider"></span>
+    </label>
+  </div>
+
+  <!-- Session stats -->
+  <div class="stats">
+    <div class="stat">
+      <div class="stat-val" id="stat-total">0</div>
+      <div class="stat-lab">Scanned</div>
+    </div>
+    <div class="stat">
+      <div class="stat-val amber" id="stat-flagged">0</div>
+      <div class="stat-lab">Flagged</div>
+    </div>
+    <div class="stat">
+      <div class="stat-val red" id="stat-high">0</div>
+      <div class="stat-lab">High Risk</div>
+    </div>
+  </div>
+
+  <!-- Current site -->
+  <div class="site-row">
+    <span class="site-label">Current site</span>
+    <span class="site-name" id="current-site">—</span>
+  </div>
+
+  <!-- Extension User ID -->
+  <div class="uid-row">
+    <div class="uid-label">Your Extension User ID — copy to dashboard</div>
+    <div class="uid-val">
+      <span id="user-id">Loading…</span>
+      <button class="copy-btn" id="copy-btn" title="Copy to clipboard">Copy</button>
+    </div>
+  </div>
+
+  <!-- Buttons -->
+  <div class="footer">
+    <button class="btn btn-secondary" id="btn-dashboard">Open Dashboard</button>
+    <button class="btn btn-primary" id="btn-clear">Clear Stats</button>
+  </div>
+
+  <div class="version">v1.0.0</div>
+
+<script src="popup.js" type="module"></script>
+</body>
+</html>

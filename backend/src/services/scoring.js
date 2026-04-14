@@ -1,3 +1,4 @@
+// backend/src/services/scoring.js
 /**
  * Security Score Calculator
  * Computes an org-level score (0–100) based on recent violation history.
