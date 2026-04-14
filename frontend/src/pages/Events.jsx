@@ -45,9 +45,14 @@ export default function EventsPage() {
     setLoading(true);
     try {
       const params = new URLSearchParams({ limit: LIMIT, page });
+
       if (severity) params.set("severity", severity);
       if (domain) params.set("domain", domain);
+
       const data = await api(`/api/events?${params}`);
+
+      console.log("EVENT DATA:", data);
+
       setEvents(data.events);
       setTotal(data.total);
     } catch (e) {
@@ -55,8 +60,6 @@ export default function EventsPage() {
     } finally {
       setLoading(false);
     }
-    const data = await api(`/api/events?${params}`);
-    console.log("EVENT DATA:", data);
   }, [page, severity, domain]);
 
   useEffect(() => {

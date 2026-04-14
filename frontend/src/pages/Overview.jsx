@@ -48,28 +48,35 @@ export default function OverviewPage() {
   const [events, setEvents] = useState([]);
   const [loading, setLoading] = useState(true);
 
-  useEffect(() => {
-    async function load() {
-      try {
-        const [ov, tl, ev] = await Promise.all([
-          api('/api/analytics/overview'),
-          api('/api/analytics/risk-timeline'),
-          api('/api/events?limit=8&severity=HIGH'),
-        ]);
-        setOverview(ov);
-        setTimeline(tl.timeline.map(d => ({
-          ...d,
-          date: format(parseISO(d.date), 'MMM d'),
-        })));
-        setEvents(ev.events);
-      } catch (e) {
-        console.error(e);
-      } finally {
-        setLoading(false);
-      }
-    }
-    load();
-  }, []);
+useEffect(() => {
+  async function loadData() {
+  try {
+    const [ov, tl, ev] = await Promise.all([
+      api('/api/analytics/overview'),
+      api('/api/analytics/risk-timeline'),
+      api('/api/events?limit=8&severity=HIGH'),
+    ]);
+
+    setOverview(ov);
+    setTimeline(tl.timeline.map(d => ({
+      ...d,
+      date: format(parseISO(d.date), 'MMM d'),
+    })));
+    setEvents(ev.events);
+  } catch (e) {
+    console.error(e);
+  } finally {
+    setLoading(false);  
+  }
+}
+
+
+  loadData();
+
+  const interval = setInterval(loadData, 5000);
+
+  return () => clearInterval(interval);
+}, []);
 
   const score = overview?.securityScore ?? 100;
   const scoreColor = score >= 75 ? 'text-green-400' : score >= 50 ? 'text-amber-400' : 'text-red-400';

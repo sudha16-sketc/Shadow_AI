@@ -1,4 +1,5 @@
 import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom';
+import { useEffect } from 'react';
 import { useAuthStore } from './hooks/useAuth';
 import Layout from './components/Layout';
 import LoginPage from './pages/Login';
@@ -14,6 +15,23 @@ function PrivateRoute({ children }) {
 }
 
 export default function App() {
+  useEffect(() => {
+  const ws = new WebSocket("ws://localhost:3001");
+
+  ws.onmessage = (msg) => {
+    const data = JSON.parse(msg.data);
+
+    if (data.type === "ALERT") {
+      console.log("REALTIME EVENT:", data.event);
+
+      // reload dashboard instantly
+      window.location.reload(); 
+      // OR call loadData() if you extract it
+    }
+  };
+
+  return () => ws.close();
+}, []);
   return (
     <BrowserRouter>
       <Routes>
