@@ -117,7 +117,7 @@ function analyse(text) {
 const BACKEND_URL = "http://localhost:3001";
 const TYPING_DEBOUNCE_MS = 1500;
 const MIN_TEXT_LENGTH = 8;
-const HIGH_RISK_THRESHOLD = 70;
+const HIGH_RISK_THRESHOLD = 40;
 
 const DOMAIN_NAMES = {
   "chat.openai.com": "ChatGPT",
@@ -168,6 +168,11 @@ function checkContent(text, eventType) {
   lastAnalysedText = text;
 
   const result = analyse(text);
+  console.log("[Shadow AI] ANALYSIS RESULT:", {
+    score: result.score,
+    severity: result.severity,
+    findings: result.findings,
+  });
   if (result.score === 0) return;
 
   console.log(
@@ -209,17 +214,14 @@ function checkContent(text, eventType) {
 // ═══════════════════════════════════════════════════════════════════════════
 
 function sendEvent(payload) {
-  fetch(`${BACKEND_URL}/api/events`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({
+  chrome.runtime.sendMessage({
+    type: "LOG_EVENT",
+    payload: {
       userId: userId ?? "unknown",
       timestamp: new Date().toISOString(),
       ...payload,
-    }),
-  })
-    .then((r) => console.log("[Shadow AI] Event sent, status:", r.status))
-    .catch((e) => console.warn("[Shadow AI] Failed to send event:", e.message));
+    },
+  });
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -377,30 +379,19 @@ function handleEsc(e) {
 document.addEventListener(
   "paste",
   (e) => {
-    let text = e.clipboardData?.getData("text") ?? "";
-    let target = e.target;
+    const text = e.clipboardData?.getData("text") ?? "";
+
     console.log("[Shadow AI] Paste event:", {
       length: text.length,
-      tag: target.tagName,
-      id: target.id,
-      class: target.className,
+      sample: text.slice(0, 100),
     });
-    // Try to get value from input/textarea/contenteditable
-    if (
-      target &&
-      (target.tagName === "TEXTAREA" ||
-        target.tagName === "INPUT" ||
-        target.isContentEditable)
-    ) {
-      text = target.value ?? target.innerText ?? target.textContent ?? text;
-    }
+
     if (text.length >= MIN_TEXT_LENGTH) {
       checkContent(text, "paste");
     }
   },
   true,
 );
-
 // Typing detection (debounced, robust)
 document.addEventListener(
   "input",
@@ -443,8 +434,9 @@ document.addEventListener(
         'div[contenteditable="true"][role="textbox"], div[contenteditable="true"]',
       );
     }
+    let input = getInputBox();
+
     if (!input) {
-      // Fallback: look for focused element
       input = document.activeElement;
     }
     if (!input) return;

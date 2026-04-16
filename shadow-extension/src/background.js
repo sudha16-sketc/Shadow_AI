@@ -5,7 +5,7 @@
 
 // shadow-extension/src/background.js
 
-const BACKEND_URL = '';
+const BACKEND_URL = 'http://localhost:3001';
 const AI_DOMAINS = [
   'chat.openai.com', 'claude.ai', 'gemini.google.com',
   'copilot.microsoft.com', 'bard.google.com', 'poe.com',
