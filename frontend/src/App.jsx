@@ -12,7 +12,7 @@ import Hero from './pages/Hero';
 
 function PrivateRoute({ children }) {
   const token = useAuthStore(s => s.token);
-  return token ? children : <Navigate to="/login" replace />;
+  return token ? children : <Navigate to="/hero" replace />;
 }
 
 export default function App() {

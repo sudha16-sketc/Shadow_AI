@@ -2,6 +2,7 @@ import { Outlet, NavLink, useNavigate } from 'react-router-dom';
 import { useAuthStore } from '../hooks/useAuth';
 
 const navItems = [
+
   { path: '/overview',  label: 'Overview',    icon: '⬡' },
   { path: '/events',    label: 'Events',      icon: '⚡' },
   { path: '/users',     label: 'Users',       icon: '◎' },
@@ -15,7 +16,7 @@ export default function Layout() {
 
   function handleLogout() {
     logout();
-    navigate('/login');
+    navigate('/hero');
   }
 
   return (
@@ -24,6 +25,16 @@ export default function Layout() {
       <aside className="w-56 flex-shrink-0 flex flex-col border-r border-white/[0.07] bg-gray-950">
         {/* Logo */}
         <div className="px-5 py-5 border-b border-white/[0.07]">
+        <NavLink
+              
+              to='/hero'
+              className={({ isActive }) =>
+                `flex items-center gap-2.5 px-3 py-2 rounded-lg text-sm transition-colors ${
+                  isActive
+                    ? 'bg-white/[0.08] text-white font-medium'
+                    : 'text-gray-400 hover:text-gray-200 hover:bg-white/[0.04]'
+                }`
+              }>
           <div className="flex items-center gap-2.5">
             <div className="w-7 h-7 rounded-lg bg-red-500/20 border border-red-500/30 flex items-center justify-center text-red-400 text-sm">
               ⚔
@@ -33,6 +44,7 @@ export default function Layout() {
               <p className="text-[10px] text-gray-500 mt-0.5 leading-none">Auditor</p>
             </div>
           </div>
+          </NavLink>
         </div>
 
         {/* Nav */}
