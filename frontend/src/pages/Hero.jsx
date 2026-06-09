@@ -21,7 +21,7 @@ export default function Hero() {
       <div className="navBar">
         <button
           className="ctaBtn"
-          onClick={() => navigate("/login")}
+          onClick={() => navigate("/signup")}
         >
           GET STARTED
         </button>
@@ -84,10 +84,7 @@ export default function Hero() {
         </a>
       </div>
 
-      <div className="heroStats">
-        <div>Active Users: 1,284</div>
-        <div>Extensions Installed: 3,912</div>
-      </div>
+
 
       {/* POPUP */}
       {showPopup && (

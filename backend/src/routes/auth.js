@@ -13,50 +13,140 @@ const TOKEN_TTL = "7d";
 
 // POST /api/auth/login
 router.post("/login", async (req, res) => {
-  const { email, password } = req.body ?? {};
-  if (!email || !password)
-    return res.status(400).json({ error: "Email and password required" });
+  try {
+    const { email, password } = req.body ?? {};
 
-  const user = await User.findOne({ email: email.toLowerCase() });
+    if (!email || !password) {
+      return res.status(400).json({
+        error: "Email and password required",
+      });
+    }
 
-  if (!user || !user.passwordHash) {
-    return res.status(401).json({ error: "Invalid credentials" });
+    const user = await User.findOne({
+      email: email.toLowerCase(),
+    });
+
+    if (!user || !user.passwordHash) {
+      return res.status(401).json({
+        error: "Invalid credentials",
+      });
+    }
+
+    const isMatch = await bcrypt.compare(
+      password,
+      user.passwordHash
+    );
+
+    if (!isMatch) {
+      return res.status(401).json({
+        error: "Invalid credentials",
+      });
+    }
+
+    const token = jwt.sign(
+      {
+        userId: user._id,
+        role: user.role,
+      },
+      JWT_SECRET,
+      {
+        expiresIn: TOKEN_TTL,
+      }
+    );
+
+    res.json({
+      token,
+      user: {
+        id: user._id,
+        name: user.name,
+        email: user.email,
+        role: user.role,
+      },
+    });
+  } catch (err) {
+    console.error("LOGIN ERROR:", err);
+
+    res.status(500).json({
+      error: err.message,
+    });
   }
-
-  const isMatch = await bcrypt.compare(password, user.passwordHash);
-
-  if (!isMatch) {
-    return res.status(401).json({ error: "Invalid credentials" });
-  }
-  const token = jwt.sign({ userId: user._id, role: user.role }, JWT_SECRET, {
-    expiresIn: TOKEN_TTL,
-  });
-  res.json({
-    token,
-    user: { id: user._id, name: user.name, email: user.email, role: user.role },
-  });
 });
 
-// POST /api/auth/register (admin creates users, or first-run)
-router.post("/register", async (req, res) => {
-  const { email, password, name, role, department } = req.body ?? {};
-  if (!email || !password || !name)
-    return res.status(400).json({ error: "Missing fields" });
 
-  const exists = await User.findOne({ email: email.toLowerCase() });
-  if (exists)
-    return res.status(409).json({ error: "Email already registered" });
+router.post("/signup", async (req, res) => {
+  try {
+    const { username, email, password } = req.body;
 
-  const passwordHash = await bcrypt.hash(password, 12);
-  const user = await User.create({
-    email,
-    passwordHash,
-    name,
-    role: role ?? "viewer",
-    department,
+    if (!username || !email || !password) {
+      return res.status(400).json({
+        message: "All fields required",
+      });
+    }
+
+    const exists = await User.findOne({
+      email: email.toLowerCase(),
+    });
+
+    if (exists) {
+      return res.status(409).json({
+        message: "Email already registered",
+      });
+    }
+
+    const passwordHash = await bcrypt.hash(password, 12);
+
+    const user = await User.create({
+      name: username,
+      email,
+      passwordHash,
+      role: "viewer",
+    });
+
+    res.status(201).json({
+      message: "Signup successful",
+      user: {
+        id: user._id,
+        name: user.name,
+        email: user.email,
+      },
+    });
+  } catch (err) {
+    console.error(err);
+
+    res.status(500).json({
+      message: "Server error",
+    });
+  }
+});
+
+router.get("/check-auth", (req, res) => {
+  try {
+    const authHeader = req.headers.authorization;
+
+    if (!authHeader?.startsWith("Bearer ")) {
+      return res.json({
+        authenticated: false,
+      });
+    }
+
+    const token = authHeader.split(" ")[1];
+
+    jwt.verify(token, JWT_SECRET);
+
+    res.json({
+      authenticated: true,
+    });
+  } catch {
+    res.json({
+      authenticated: false,
+    });
+  }
+});
+
+router.post("/logout", (req, res) => {
+  res.json({
+    success: true,
   });
-
-  res.status(201).json({ id: user._id, email: user.email, name: user.name });
 });
 
 export default router;

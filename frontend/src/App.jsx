@@ -2,7 +2,7 @@ import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom';
 import { useEffect } from 'react';
 import { useAuthStore } from './hooks/useAuth';
 import Layout from './components/Layout';
-import LoginPage from './pages/Login';
+import Signup from './pages/Signup';
 import OverviewPage from './pages/Overview';
 import EventsPage from './pages/Events';
 import UsersPage from './pages/Users';
@@ -37,7 +37,7 @@ export default function App() {
     <BrowserRouter>
       <Routes>
         <Route path="/hero" element={<Hero />} />
-        <Route path="/login" element={<LoginPage />} />
+        <Route path="/signup" element={<Signup />} />
         <Route path="/" element={
           <PrivateRoute>
             <Layout />
