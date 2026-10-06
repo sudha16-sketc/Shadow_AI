@@ -3,80 +3,91 @@
  * Shadow AI Auditor — Express Server
  */
 import 'dotenv/config';
-import express from 'express';
-import cors from 'cors';
-import helmet from 'helmet';
-import morgan from 'morgan';
-import rateLimit from 'express-rate-limit';
 import mongoose from 'mongoose';
 import { createServer } from 'http';
-import { WebSocketServer } from 'ws';
-
+import { fileURLToPath } from 'node:url';
+import { Device, Event, EventReplay, Org, PlatformAdmin, PlatformAuditLog, TenantInvitation } from './models/index.js';
+import app from './app.js';
+import { attachTenantWebSockets, broadcastTenantAlert } from './services/websocket.js';
 import logger from './utils/logger.js';
-import authRoutes from './routes/auth.js';
-import eventsRoutes from './routes/events.js';
-import usersRoutes from './routes/users.js';
-import analyticsRoutes from './routes/analytics.js';
-import settingsRoutes from './routes/settings.js';
-import { authMiddleware } from './middleware/auth.js';
 
-const app = express();
 const httpServer = createServer(app);
-
-// ─── WebSocket (real-time alerts) ─────────────────────────────────────────────
-export const wss = new WebSocketServer({ server: httpServer });
-const adminClients = new Set();
-
-wss.on('connection', (ws, req) => {
-  // In production: verify JWT from query param before adding to adminClients
-  adminClients.add(ws);
-  ws.on('close', () => adminClients.delete(ws));
-});
+export const wss = attachTenantWebSockets(httpServer);
 
 export function broadcastAlert(event) {
-  const msg = JSON.stringify({ type: 'ALERT', event });
-  adminClients.forEach(client => {
-    if (client.readyState === 1) client.send(msg); // OPEN
-  });
+  broadcastTenantAlert(event);
 }
 
-// ─── Middleware ────────────────────────────────────────────────────────────────
-app.use(helmet());
-app.use(cors({
-  origin: true,
-  methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
-  allowedHeaders: ['Content-Type', 'Authorization'],
-  credentials: true,
-}));
-app.options('*', cors());
-app.use(express.json({ limit: '50kb' })); // prevent oversized payloads
-app.use(morgan('combined', { stream: { write: msg => logger.info(msg.trim()) } }));
-
-// Rate limiting — generous for events (extension sends many), strict for auth
-app.use('/api/events', rateLimit({ windowMs: 60_000, max: 500, standardHeaders: true }));
-app.use('/api/auth',   rateLimit({ windowMs: 60_000, max: 20,  standardHeaders: true }));
-
-// ─── Routes ───────────────────────────────────────────────────────────────────
-app.use('/api/auth',      authRoutes);
-app.use('/api/events',    eventsRoutes);         // no auth — extension sends events
-app.use('/api/users',     authMiddleware, usersRoutes);
-app.use('/api/analytics', authMiddleware, analyticsRoutes);
-app.use('/api/settings',  authMiddleware, settingsRoutes);
-
-app.get('/health', (_req, res) => res.json({ status: 'ok', ts: new Date() }));
-
-// ─── Error handler ────────────────────────────────────────────────────────────
-app.use((err, _req, res, _next) => {
-  logger.error(err);
-  res.status(err.status ?? 500).json({ error: err.message ?? 'Internal error' });
-});
-
-// ─── DB + Start ───────────────────────────────────────────────────────────────
 const PORT = process.env.PORT ?? 3001;
+const SHUTDOWN_GRACE_MS = Number(process.env.SHUTDOWN_GRACE_MS ?? 15_000);
 
-mongoose.connect(process.env.MONGODB_URI ?? 'mongodb://localhost:27017/shadow-ai-auditor')
-  .then(() => {
-    logger.info('MongoDB connected');
-    httpServer.listen(PORT, () => logger.info(`Server running on :${PORT}`));
-  })
-  .catch(err => { logger.error('DB connection failed', err); process.exit(1); });
+function resolveMongoUri() {
+  const uri = process.env.MONGODB_URI;
+  if (uri) return uri;
+  if (process.env.NODE_ENV === 'production') {
+    throw new Error('MONGODB_URI must be provided when NODE_ENV=production.');
+  }
+  return 'mongodb://localhost:27017/shadow-ai-auditor';
+}
+
+export async function startServer() {
+  await mongoose.connect(resolveMongoUri(), { autoIndex: false });
+  try {
+    await Event.collection.dropIndex('orgId_1_idempotencyKey_1');
+  } catch (err) {
+    if (![26, 27].includes(err.code) && err.codeName !== 'IndexNotFound' && err.codeName !== 'NamespaceNotFound') throw err;
+  }
+  await Promise.all([
+    Event.createIndexes(),
+    EventReplay.createIndexes(),
+    Device.createIndexes(),
+    Org.createIndexes(),
+    PlatformAdmin.createIndexes(),
+    TenantInvitation.createIndexes(),
+    PlatformAuditLog.createIndexes(),
+  ]);
+  logger.info('MongoDB connected');
+  httpServer.listen(PORT, () => logger.info(`Server running on :${PORT}`));
+}
+
+/**
+ * Graceful shutdown: stop accepting new connections, give in-flight requests a
+ * bounded window, close the database connection, then exit.
+ */
+export function shutdown(signal) {
+  logger.info(`${signal} received — draining connections`);
+
+  const forceExit = setTimeout(() => {
+    logger.error(`Shutdown exceeded ${SHUTDOWN_GRACE_MS}ms — forcing exit`);
+    process.exit(1);
+  }, SHUTDOWN_GRACE_MS);
+  forceExit.unref();
+
+  httpServer.close(async (err) => {
+    if (err) logger.error('HTTP server close failed', err);
+    try {
+      await mongoose.disconnect();
+      logger.info('MongoDB disconnected');
+    } catch (disconnectErr) {
+      logger.error('MongoDB disconnect failed', disconnectErr);
+    }
+    clearTimeout(forceExit);
+    logger.info('Shutdown complete');
+    process.exit(0);
+  });
+
+  httpServer.closeIdleConnections?.();
+}
+
+if (process.argv[1] && fileURLToPath(import.meta.url) === process.argv[1]) {
+  startServer().catch(err => {
+    logger.error('Startup failed', err);
+    process.exit(1);
+  });
+
+  process.on('SIGTERM', () => shutdown('SIGTERM'));
+  process.on('SIGINT', () => shutdown('SIGINT'));
+  process.on('unhandledRejection', (reason) => {
+    logger.error('Unhandled promise rejection', reason);
+  });
+}

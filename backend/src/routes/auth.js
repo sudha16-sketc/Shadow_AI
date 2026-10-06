@@ -5,52 +5,61 @@
 import { Router } from "express";
 import bcrypt from "bcryptjs";
 import jwt from "jsonwebtoken";
-import { User } from "../models/index.js";
+import { z } from 'zod';
+import { JWT_SECRET } from "../config/security.js";
+import { Device, Org, User } from "../models/index.js";
+import { authMiddleware, requireRole, requireUserAuth } from "../middleware/auth.js";
+import { issueWebSocketTicket, revokeWebSocketUser } from '../services/websocket.js';
+import { createDeviceCredential, createDeviceId, createEnrollmentCode, hashDeviceCredential } from '../utils/device-credentials.js';
 
 const router = Router();
-const JWT_SECRET = process.env.JWT_SECRET ?? "change-this-secret-in-production";
 const TOKEN_TTL = "7d";
+// Compare against a throwaway hash when no account matches so that the
+// response time of a missing account matches that of a wrong password.
+const DUMMY_PASSWORD_HASH = "$2a$12$9SFTaJVQ/06RHQqYPMx/SeHSyFNMt.rSWqWw5WEGa18sT0zUTPh2y";
+const LoginSchema = z.object({
+  email: z.string().trim().email().max(254),
+  password: z.string().min(1).max(128),
+}).strict();
+const EnrollmentSchema = z.object({ label: z.string().trim().min(1).max(100).optional() }).strict();
+const RegistrationSchema = z.object({ code: z.string().min(32).max(128) }).strict();
 
 // POST /api/auth/login
 router.post("/login", async (req, res) => {
   try {
-    const { email, password } = req.body ?? {};
-
-    if (!email || !password) {
-      return res.status(400).json({
-        error: "Email and password required",
-      });
+    const parsed = LoginSchema.safeParse(req.body);
+    if (!parsed.success) {
+      return res.status(400).json({ error: "Email and password required" });
     }
+    const { email, password } = parsed.data;
 
     const user = await User.findOne({
       email: email.toLowerCase(),
     });
 
-    if (!user || !user.passwordHash) {
+    // Always run one bcrypt comparison so timing does not reveal account existence.
+    const isMatch = await bcrypt.compare(password, user?.passwordHash || DUMMY_PASSWORD_HASH);
+
+    if (!user || !user.passwordHash || !user.isActive || !user.orgId || !isMatch) {
       return res.status(401).json({
         error: "Invalid credentials",
       });
     }
 
-    const isMatch = await bcrypt.compare(
-      password,
-      user.passwordHash
-    );
-
-    if (!isMatch) {
-      return res.status(401).json({
-        error: "Invalid credentials",
-      });
-    }
+    const org = await Org.findOne({ _id: user.orgId, lifecycleStatus: 'active' });
+    if (!org) return res.status(401).json({ error: 'Invalid credentials' });
 
     const token = jwt.sign(
       {
+        tokenType: 'user',
         userId: user._id,
-        role: user.role,
+        orgId: user.orgId,
+        authVersion: user.authVersion ?? 0,
       },
       JWT_SECRET,
       {
         expiresIn: TOKEN_TTL,
+        algorithm: 'HS256',
       }
     );
 
@@ -60,93 +69,100 @@ router.post("/login", async (req, res) => {
         id: user._id,
         name: user.name,
         email: user.email,
+        orgId: user.orgId,
         role: user.role,
       },
     });
   } catch (err) {
-    console.error("LOGIN ERROR:", err);
-
     res.status(500).json({
-      error: err.message,
+      error: 'Login failed',
     });
   }
 });
 
 
 router.post("/signup", async (req, res) => {
+  return res.status(403).json({ error: 'Account enrollment requires an organization invitation' });
+});
+
+router.get('/check-auth', authMiddleware, requireUserAuth, (req, res) => {
+  res.json({ authenticated: true, userId: req.user.userId, orgId: req.user.orgId, role: req.user.role });
+});
+
+router.post('/logout', authMiddleware, requireUserAuth, async (req, res) => {
+  await User.updateOne({ _id: req.user.userId, orgId: req.user.orgId }, { $inc: { authVersion: 1 } });
+  revokeWebSocketUser(req.user.userId);
+  res.json({ success: true });
+});
+
+router.post('/device/enrollment-code', authMiddleware, requireUserAuth, async (req, res) => {
   try {
-    const { username, email, password } = req.body;
-
-    if (!username || !email || !password) {
-      return res.status(400).json({
-        message: "All fields required",
-      });
-    }
-
-    const exists = await User.findOne({
-      email: email.toLowerCase(),
+    const { label } = EnrollmentSchema.parse(req.body ?? {});
+    const code = createEnrollmentCode();
+    const expiresAt = new Date(Date.now() + 5 * 60_000);
+    const device = await Device.create({
+      orgId: req.user.orgId,
+      userId: req.user.userId,
+      deviceId: createDeviceId(),
+      label: label ?? 'Browser Extension',
+      tokenHash: hashDeviceCredential(code),
+      enrollmentExpiresAt: expiresAt,
+      isActive: false,
+      revokedAt: null,
     });
-
-    if (exists) {
-      return res.status(409).json({
-        message: "Email already registered",
-      });
-    }
-
-    const passwordHash = await bcrypt.hash(password, 12);
-
-    const user = await User.create({
-      name: username,
-      email,
-      passwordHash,
-      role: "viewer",
-    });
-
-    res.status(201).json({
-      message: "Signup successful",
-      user: {
-        id: user._id,
-        name: user.name,
-        email: user.email,
-      },
-    });
+    return res.status(201).json({ code, expiresAt, deviceId: device.deviceId });
   } catch (err) {
-    console.error(err);
-
-    res.status(500).json({
-      message: "Server error",
-    });
+    if (err instanceof z.ZodError) return res.status(400).json({ error: 'Invalid enrollment request' });
+    return res.status(500).json({ error: 'Failed to create device enrollment' });
   }
 });
 
-router.get("/check-auth", (req, res) => {
+router.post('/device/register', async (req, res) => {
+  const parsed = RegistrationSchema.safeParse(req.body);
+  if (!parsed.success) return res.status(400).json({ error: 'Valid enrollment code required' });
+
   try {
-    const authHeader = req.headers.authorization;
-
-    if (!authHeader?.startsWith("Bearer ")) {
-      return res.json({
-        authenticated: false,
-      });
-    }
-
-    const token = authHeader.split(" ")[1];
-
-    jwt.verify(token, JWT_SECRET);
-
-    res.json({
-      authenticated: true,
+    const now = new Date();
+    const pending = await Device.findOne({
+      tokenHash: hashDeviceCredential(parsed.data.code),
+      isActive: false,
+      enrollmentExpiresAt: { $gt: now },
     });
+    if (!pending) return res.status(401).json({ error: 'Enrollment code is invalid or expired' });
+
+    const owner = await User.findOne({ _id: pending.userId, orgId: pending.orgId, isActive: true });
+    const org = await Org.findOne({ _id: pending.orgId, lifecycleStatus: 'active' });
+    if (!owner || !org) return res.status(401).json({ error: 'Enrollment code is invalid or expired' });
+
+    const token = createDeviceCredential();
+    const device = await Device.findOneAndUpdate(
+      { _id: pending._id, tokenHash: hashDeviceCredential(parsed.data.code), isActive: false, enrollmentExpiresAt: { $gt: now } },
+      { $set: { tokenHash: hashDeviceCredential(token), isActive: true, enrollmentExpiresAt: null, lastSeenAt: now } },
+      { new: true, runValidators: true }
+    );
+    if (!device) return res.status(401).json({ error: 'Enrollment code is invalid or expired' });
+
+    return res.status(201).json({ token, deviceId: device.deviceId, label: device.label });
   } catch {
-    res.json({
-      authenticated: false,
-    });
+    return res.status(500).json({ error: 'Device registration failed' });
   }
 });
 
-router.post("/logout", (req, res) => {
-  res.json({
-    success: true,
-  });
+router.post('/device/:deviceId/revoke', authMiddleware, requireUserAuth, async (req, res) => {
+  const filter = { orgId: req.user.orgId, deviceId: req.params.deviceId, isActive: true };
+  if (req.user.role !== 'admin') filter.userId = req.user.userId;
+
+  const device = await Device.findOneAndUpdate(
+    filter,
+    { $set: { isActive: false, revokedAt: new Date() } },
+    { new: true }
+  );
+  if (!device) return res.status(404).json({ error: 'Device not found' });
+  res.json({ ok: true });
+});
+
+router.post('/ws-ticket', authMiddleware, requireUserAuth, requireRole('admin', 'manager'), (req, res) => {
+  res.json(issueWebSocketTicket(req.user));
 });
 
 export default router;

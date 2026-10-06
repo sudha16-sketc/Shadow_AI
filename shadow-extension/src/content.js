@@ -46,7 +46,7 @@ const PATTERNS = [
     label: "Credit Card Number",
   },
   {
-    re: /\b[a-zA-Z0-9._%+\-]+@[a-zA-Z0-9.\-]+\.[a-zA-Z]{2,}\b/g,
+    re: /\b[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}\b/g,
     score: 40,
     label: "Email Address",
   },
@@ -114,7 +114,6 @@ function analyse(text) {
 // CONFIG
 // ═══════════════════════════════════════════════════════════════════════════
 
-const BACKEND_URL = "http://localhost:3001";
 const TYPING_DEBOUNCE_MS = 1500;
 const MIN_TEXT_LENGTH = 8;
 const HIGH_RISK_THRESHOLD = 40;
@@ -140,19 +139,15 @@ let lastAnalysedText = "";
 let typingTimer = null;
 let modalActive = false;
 let pendingSubmit = null;
-let userId = null;
 let enabled = true;
 
 // Load settings from extension storage
-chrome.storage.sync.get(["userId", "enabled", "optedOut"], (result) => {
-  userId = result.userId ?? null;
+chrome.storage.sync.get(["enabled", "optedOut"], (result) => {
   enabled = result.enabled !== false;
   if (!result.optedOut) {
     console.log(
       "[Shadow AI] Content script active on",
       currentDomain,
-      "| user:",
-      userId,
     );
   }
 });
@@ -217,8 +212,6 @@ function sendEvent(payload) {
   chrome.runtime.sendMessage({
     type: "LOG_EVENT",
     payload: {
-      userId: userId ?? "unknown",
-      timestamp: new Date().toISOString(),
       ...payload,
     },
   });
@@ -380,11 +373,6 @@ document.addEventListener(
   "paste",
   (e) => {
     const text = e.clipboardData?.getData("text") ?? "";
-
-    console.log("[Shadow AI] Paste event:", {
-      length: text.length,
-      sample: text.slice(0, 100),
-    });
 
     if (text.length >= MIN_TEXT_LENGTH) {
       checkContent(text, "paste");

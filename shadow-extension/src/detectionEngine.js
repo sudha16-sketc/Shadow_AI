@@ -22,7 +22,7 @@ const PATTERNS = {
   GENERIC_SECRET:    { re: /\b(secret|password|passwd|pwd)\s*[:=]\s*["']?[^\s"',;]{8,}/gi, score: 65, label: 'Secret/Password' },
 
   // PII
-  EMAIL:             { re: /\b[a-zA-Z0-9._%+\-]+@[a-zA-Z0-9.\-]+\.[a-zA-Z]{2,}\b/g, score: 40, label: 'Email Address' },
+  EMAIL:             { re: /\b[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}\b/g, score: 40, label: 'Email Address' },
   SSN:               { re: /\b\d{3}-\d{2}-\d{4}\b/g,                   score: 95, label: 'Social Security Number' },
   CREDIT_CARD:       { re: /\b(?:4[0-9]{12}(?:[0-9]{3})?|5[1-5][0-9]{14}|3[47][0-9]{13}|6(?:011|5[0-9]{2})[0-9]{12})\b/g, score: 98, label: 'Credit Card Number' },
   PHONE_US:          { re: /\b(\+1[-.\s]?)?\(?\d{3}\)?[-.\s]?\d{3}[-.\s]?\d{4}\b/g, score: 35, label: 'US Phone Number' },

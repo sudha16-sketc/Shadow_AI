@@ -15,28 +15,36 @@
 import { Router } from 'express';
 import { z } from 'zod';
 import { Org } from '../models/index.js';
-import { requireRole } from '../middleware/auth.js';
+import { requireRole, requireTenantAccess } from '../middleware/auth.js';
+import { isSafeCallbackUrl } from '../utils/url-guard.js';
 import logger from '../utils/logger.js';
 
 const router = Router();
 
 // All settings routes are admin-only
 router.use(requireRole('admin'));
+router.use(requireTenantAccess);
 
 // ─── Validation schemas ───────────────────────────────────────────────────────
 
 const OrgSchema = z.object({
   name:            z.string().min(1).max(100).optional(),
-  slackWebhookUrl: z.string().url().optional().or(z.literal('')),
+  slackWebhookUrl: z.union([
+    z.string().url().max(500).refine(value => isSafeCallbackUrl(value), {
+      message: 'Slack webhook must be an HTTPS URL that does not target a private or local address',
+    }),
+    z.literal(''),
+  ]).optional(),
   alertEmail:      z.string().email().optional().or(z.literal('')),
   domain:          z.string().max(100).optional(),
 });
 
 const PolicySchema = z.object({
+  defaultAction: z.enum(['ALLOW', 'WARN', 'SANITIZE', 'BLOCK']).optional(),
   blockOnHigh:          z.boolean().optional(),
   requireJustification: z.boolean().optional(),
   alertOnMedium:        z.boolean().optional(),
-});
+}).strict().refine(data => Object.keys(data).length > 0, 'At least one policy setting is required');
 
 const DomainsSchema = z.object({
   add:    z.array(z.string().max(100)).optional(),
@@ -56,24 +64,16 @@ const DEFAULT_DOMAINS = [
 ];
 
 // ─── Helper: get or create the singleton Org document ─────────────────────────
-async function getOrg() {
-  let org = await Org.findOne();
-  if (!org) {
-    org = await Org.create({
-      name: 'My Organisation',
-      securityScore: 100,
-      monitoredDomains: DEFAULT_DOMAINS,
-      settings: { blockOnHigh: false, requireJustification: false, alertOnMedium: false },
-    });
-  }
-  return org;
+async function getOrg(orgId) {
+  return Org.findOne({ _id: orgId });
 }
 
 // ─── GET /api/settings/org ────────────────────────────────────────────────────
 
-router.get('/org', async (_req, res) => {
+router.get('/org', async (req, res) => {
   try {
-    const org = await getOrg();
+    const org = await getOrg(req.user.orgId);
+    if (!org) return res.status(404).json({ error: 'Organization not found' });
     // Mask the Slack webhook — show only that it's set, not the full URL
     const slackConfigured = !!org.slackWebhookUrl;
     const emailConfigured = !!org.alertEmail;
@@ -112,10 +112,11 @@ router.patch('/org', async (req, res) => {
     if (data.alertEmail !== undefined)      updates.alertEmail      = data.alertEmail;
 
     const org = await Org.findOneAndUpdate(
-      {},
+      { _id: req.user.orgId },
       { $set: updates },
-      { new: true, upsert: true, runValidators: true }
+      { new: true, runValidators: true }
     );
+    if (!org) return res.status(404).json({ error: 'Organization not found' });
 
     logger.info(`Org settings updated by admin ${req.user.userId}`);
     res.json({ ok: true, name: org.name, updatedAt: org.updatedAt });
@@ -137,10 +138,11 @@ router.patch('/org/policy', async (req, res) => {
     }
 
     const org = await Org.findOneAndUpdate(
-      {},
-      { $set: setFields },
-      { new: true, upsert: true }
+      { _id: req.user.orgId },
+      { $set: setFields, $inc: { policyVersion: 1 } },
+      { new: true, runValidators: true }
     );
+    if (!org) return res.status(404).json({ error: 'Organization not found' });
 
     logger.info(`Policy updated by admin ${req.user.userId}: ${JSON.stringify(data)}`);
     res.json({ ok: true, settings: org.settings });
@@ -153,11 +155,16 @@ router.patch('/org/policy', async (req, res) => {
 
 // ─── POST /api/settings/slack/test ───────────────────────────────────────────
 
-router.post('/slack/test', async (_req, res) => {
+router.post('/slack/test', async (req, res) => {
   try {
-    const org = await getOrg();
+    const org = await getOrg(req.user.orgId);
+    if (!org) return res.status(404).json({ error: 'Organization not found' });
     if (!org.slackWebhookUrl) {
       return res.status(400).json({ error: 'No Slack webhook URL configured' });
+    }
+    if (!isSafeCallbackUrl(org.slackWebhookUrl)) {
+      logger.warn(`Blocked unsafe Slack webhook for org ${req.user.orgId}`);
+      return res.status(400).json({ error: 'Configured Slack webhook URL is not allowed' });
     }
 
     const payload = {
@@ -192,7 +199,8 @@ router.post('/slack/test', async (_req, res) => {
 
 router.post('/email/test', async (req, res) => {
   try {
-    const org = await getOrg();
+    const org = await getOrg(req.user.orgId);
+    if (!org) return res.status(404).json({ error: 'Organization not found' });
     if (!org.alertEmail) {
       return res.status(400).json({ error: 'No alert email configured' });
     }
@@ -223,9 +231,10 @@ router.post('/email/test', async (req, res) => {
 
 // ─── GET /api/settings/domains ────────────────────────────────────────────────
 
-router.get('/domains', async (_req, res) => {
+router.get('/domains', async (req, res) => {
   try {
-    const org = await getOrg();
+    const org = await getOrg(req.user.orgId);
+    if (!org) return res.status(404).json({ error: 'Organization not found' });
     res.json({ domains: org.monitoredDomains ?? DEFAULT_DOMAINS });
   } catch (err) {
     logger.error('GET /settings/domains error', err);
@@ -238,7 +247,7 @@ router.get('/domains', async (_req, res) => {
 router.patch('/domains', async (req, res) => {
   try {
     const { add = [], remove = [] } = DomainsSchema.parse(req.body);
-    const org = await getOrg();
+    const org = await getOrg(req.user.orgId);
 
     let domains = new Set(org.monitoredDomains ?? DEFAULT_DOMAINS);
     add.forEach(d => domains.add(d.toLowerCase().trim()));
@@ -248,7 +257,7 @@ router.patch('/domains', async (req, res) => {
       return res.status(400).json({ error: 'Must monitor at least one domain' });
     }
 
-    await Org.findOneAndUpdate({}, { $set: { monitoredDomains: [...domains] } });
+    await Org.findOneAndUpdate({ _id: req.user.orgId }, { $set: { monitoredDomains: [...domains] } });
 
     logger.info(`Monitored domains updated by admin ${req.user.userId}`);
     res.json({ ok: true, domains: [...domains] });

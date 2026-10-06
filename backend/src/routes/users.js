@@ -16,10 +16,14 @@ import { Router } from 'express';
 import bcrypt from 'bcryptjs';
 import { z } from 'zod';
 import { User, Event } from '../models/index.js';
-import { requireRole } from '../middleware/auth.js';
+import { requireRole, requireTenantAccess } from '../middleware/auth.js';
+import { revokeWebSocketUser } from '../services/websocket.js';
 import logger from '../utils/logger.js';
+import { clampPagination, escapeRegex } from '../utils/pagination.js';
 
 const router = Router();
+
+router.use(requireTenantAccess);
 
 // ─── Validation schemas ───────────────────────────────────────────────────────
 
@@ -46,17 +50,20 @@ const UpdateUserSchema = z.object({
 
 router.get('/', requireRole('admin', 'manager'), async (req, res) => {
   try {
-    const { search, department, role, page = 1, limit = 30 } = req.query;
-    const filter = {};
+    const { search, department, role } = req.query;
+    const { page, limit, skip } = clampPagination(req.query, { defaultLimit: 30, maxLimit: 100 });
+    const filter = { orgId: req.user.orgId };
 
     if (search) {
+      // Escape client input so it cannot be interpreted as a regex (ReDoS / injection).
+      const needle = escapeRegex(String(search).slice(0, 100));
       filter.$or = [
-        { name:  { $regex: search, $options: 'i' } },
-        { email: { $regex: search, $options: 'i' } },
+        { name:  { $regex: needle, $options: 'i' } },
+        { email: { $regex: needle, $options: 'i' } },
       ];
     }
-    if (department) filter.department = department;
-    if (role)       filter.role = role;
+    if (department) filter.department = String(department).slice(0, 100);
+    if (role)       filter.role = String(role);
 
     const since = new Date(Date.now() - 30 * 86400000);
 
@@ -64,8 +71,8 @@ router.get('/', requireRole('admin', 'manager'), async (req, res) => {
       User.find(filter)
         .select('-passwordHash')               // never expose hashed passwords
         .sort({ createdAt: -1 })
-        .skip((+page - 1) * +limit)
-        .limit(+limit)
+        .skip(skip)
+        .limit(limit)
         .lean(),
       User.countDocuments(filter),
     ]);
@@ -73,7 +80,7 @@ router.get('/', requireRole('admin', 'manager'), async (req, res) => {
     // Enrich each user with their 30-day event stats in one aggregation
     const userIds = users.map(u => u._id);
     const stats = await Event.aggregate([
-      { $match: { userRef: { $in: userIds }, timestamp: { $gte: since } } },
+      { $match: { orgId: req.user.orgId, userRef: { $in: userIds }, timestamp: { $gte: since } } },
       {
         $group: {
           _id:        '$userRef',
@@ -96,7 +103,7 @@ router.get('/', requireRole('admin', 'manager'), async (req, res) => {
       },
     }));
 
-    res.json({ users: enriched, total, page: +page, limit: +limit });
+    res.json({ users: enriched, total, page, limit });
   } catch (err) {
     logger.error('GET /users error', err);
     res.status(500).json({ error: 'Internal error' });
@@ -106,8 +113,8 @@ router.get('/', requireRole('admin', 'manager'), async (req, res) => {
 // ─── GET /api/users/departments  ──────────────────────────────────────────────
 // Returns distinct department list for filter dropdowns
 
-router.get('/departments', requireRole('admin', 'manager'), async (_req, res) => {
-  const departments = await User.distinct('department', { department: { $ne: '' } });
+router.get('/departments', requireRole('admin', 'manager'), async (req, res) => {
+  const departments = await User.distinct('department', { orgId: req.user.orgId, department: { $ne: '' } });
   res.json({ departments: departments.sort() });
 });
 
@@ -116,19 +123,19 @@ router.get('/departments', requireRole('admin', 'manager'), async (_req, res) =>
 
 router.get('/:id', requireRole('admin', 'manager'), async (req, res) => {
   try {
-    const user = await User.findById(req.params.id).select('-passwordHash').lean();
+    const user = await User.findOne({ _id: req.params.id, orgId: req.user.orgId }).select('-passwordHash').lean();
     if (!user) return res.status(404).json({ error: 'User not found' });
 
     const since = new Date(Date.now() - 30 * 86400000);
 
     // Recent events + aggregate stats in parallel
     const [recentEvents, stats] = await Promise.all([
-      Event.find({ userRef: user._id })
+      Event.find({ orgId: req.user.orgId, userRef: user._id })
         .sort({ timestamp: -1 })
         .limit(20)
         .lean(),
       Event.aggregate([
-        { $match: { userRef: user._id, timestamp: { $gte: since } } },
+        { $match: { orgId: req.user.orgId, userRef: user._id, timestamp: { $gte: since } } },
         {
           $group: {
             _id:      null,
@@ -157,12 +164,12 @@ router.post('/', requireRole('admin'), async (req, res) => {
   try {
     const data = CreateUserSchema.parse(req.body);
 
-    const exists = await User.findOne({ email: data.email.toLowerCase() });
+    const exists = await User.findOne({ email: data.email.toLowerCase(), orgId: req.user.orgId });
     if (exists) return res.status(409).json({ error: 'Email already registered' });
 
     const passwordHash = await bcrypt.hash(data.password, 12);
     const { password: _, ...rest } = data;       // strip plaintext password
-    const user = await User.create({ ...rest, passwordHash });
+    const user = await User.create({ ...rest, orgId: req.user.orgId, passwordHash });
 
     logger.info(`User created: ${user.email} by admin ${req.user.userId}`);
     res.status(201).json({
@@ -187,13 +194,17 @@ router.patch('/:id', requireRole('admin'), async (req, res) => {
       return res.status(400).json({ error: 'Cannot demote your own admin account' });
     }
 
-    const user = await User.findByIdAndUpdate(
-      req.params.id,
-      { $set: updates },
+    const update = { $set: updates };
+    if (updates.role !== undefined) update.$inc = { authVersion: 1 };
+
+    const user = await User.findOneAndUpdate(
+      { _id: req.params.id, orgId: req.user.orgId },
+      update,
       { new: true, runValidators: true }
     ).select('-passwordHash');
 
     if (!user) return res.status(404).json({ error: 'User not found' });
+    if (updates.role !== undefined) revokeWebSocketUser(user._id);
 
     logger.info(`User ${user.email} updated by admin ${req.user.userId}`);
     res.json(user);
@@ -214,8 +225,12 @@ router.patch('/:id/password', requireRole('admin'), async (req, res) => {
       return res.status(400).json({ error: 'Password must be at least 8 characters' });
     }
     const passwordHash = await bcrypt.hash(newPassword, 12);
-    const user = await User.findByIdAndUpdate(req.params.id, { $set: { passwordHash } });
+    const user = await User.findOneAndUpdate(
+      { _id: req.params.id, orgId: req.user.orgId },
+      { $set: { passwordHash }, $inc: { authVersion: 1 } }
+    );
     if (!user) return res.status(404).json({ error: 'User not found' });
+    revokeWebSocketUser(user._id);
     res.json({ ok: true });
   } catch (err) {
     logger.error('PATCH /users/:id/password error', err);
@@ -237,8 +252,8 @@ router.patch('/:id/opt-out', async (req, res) => {
     if (typeof optedOut !== 'boolean') {
       return res.status(400).json({ error: 'optedOut must be a boolean' });
     }
-    const user = await User.findByIdAndUpdate(
-      req.params.id, { $set: { optedOut } }, { new: true }
+    const user = await User.findOneAndUpdate(
+      { _id: req.params.id, orgId: req.user.orgId }, { $set: { optedOut } }, { new: true }
     ).select('-passwordHash');
     if (!user) return res.status(404).json({ error: 'User not found' });
     res.json({ id: user._id, optedOut: user.optedOut });
@@ -256,10 +271,13 @@ router.delete('/:id', requireRole('admin'), async (req, res) => {
     if (req.params.id === req.user.userId) {
       return res.status(400).json({ error: 'Cannot deactivate your own account' });
     }
-    const user = await User.findByIdAndUpdate(
-      req.params.id, { $set: { isActive: false } }, { new: true }
+    const user = await User.findOneAndUpdate(
+      { _id: req.params.id, orgId: req.user.orgId },
+      { $set: { isActive: false }, $inc: { authVersion: 1 } },
+      { new: true }
     ).select('-passwordHash');
     if (!user) return res.status(404).json({ error: 'User not found' });
+    revokeWebSocketUser(user._id);
 
     logger.info(`User ${user.email} deactivated by admin ${req.user.userId}`);
     res.json({ ok: true, id: user._id });
@@ -274,16 +292,20 @@ router.delete('/:id', requireRole('admin'), async (req, res) => {
 
 router.get('/:id/events', requireRole('admin', 'manager'), async (req, res) => {
   try {
-    const { page = 1, limit = 20, severity } = req.query;
-    const filter = { userRef: req.params.id };
-    if (severity) filter.severity = severity.toUpperCase();
+    const { severity } = req.query;
+    const { page, limit, skip } = clampPagination(req.query, { defaultLimit: 20, maxLimit: 100 });
+    const user = await User.findOne({ _id: req.params.id, orgId: req.user.orgId }).select('_id').lean();
+    if (!user) return res.status(404).json({ error: 'User not found' });
+
+    const filter = { orgId: req.user.orgId, userRef: user._id };
+    if (severity) filter.severity = String(severity).toUpperCase();
 
     const [events, total] = await Promise.all([
-      Event.find(filter).sort({ timestamp: -1 }).skip((+page - 1) * +limit).limit(+limit).lean(),
+      Event.find(filter).sort({ timestamp: -1 }).skip(skip).limit(limit).lean(),
       Event.countDocuments(filter),
     ]);
 
-    res.json({ events, total, page: +page, limit: +limit });
+    res.json({ events, total, page, limit });
   } catch (err) {
     logger.error('GET /users/:id/events error', err);
     res.status(500).json({ error: 'Internal error' });

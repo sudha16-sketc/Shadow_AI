@@ -2,7 +2,7 @@
   "manifest_version": 3,
   "name": "Shadow AI Auditor",
   "version": "1.0.0",
-  "description": "Prevents sensitive data from being shared with public AI tools",
+  "description": "Detects potential sensitive data in browser AI inputs",
 
   "permissions": ["tabs", "scripting", "storage", "alarms"],
 
@@ -48,7 +48,7 @@
   },
 
   "action": {
-    "default_popup": "popup.html",
+    "default_popup": "src/popup.html",
     "default_icon": {
       "16": "icons/icon16.png",
       "48": "icons/icon48.png"

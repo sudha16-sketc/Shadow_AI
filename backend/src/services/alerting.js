@@ -6,13 +6,18 @@
  */
 import nodemailer from 'nodemailer';
 import { Org } from '../models/index.js';
+import { isSafeCallbackUrl } from '../utils/url-guard.js';
 import logger from '../utils/logger.js';
 
 // ─── Slack ────────────────────────────────────────────────────────────────────
 
 export async function sendSlackAlert(event) {
-  const org = await Org.findOne().select('slackWebhookUrl').lean();
+  const org = await Org.findOne({ _id: event.orgId }).select('slackWebhookUrl').lean();
   if (!org?.slackWebhookUrl) return;
+  if (!isSafeCallbackUrl(org.slackWebhookUrl)) {
+    logger.warn(`Skipping Slack alert for org ${event.orgId}: webhook URL is not allowed`);
+    return;
+  }
 
   const severityEmoji = { HIGH: '🔴', MEDIUM: '🟡', LOW: '🟢' };
   const emoji = severityEmoji[event.severity] ?? '⚠️';
@@ -62,6 +67,8 @@ export async function sendSlackAlert(event) {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(body),
+    signal: AbortSignal.timeout(10_000),
+    redirect: 'error',
   });
 
   if (!res.ok) throw new Error(`Slack returned ${res.status}`);
@@ -81,7 +88,7 @@ const transporter = nodemailer.createTransport({
 });
 
 export async function sendEmailAlert(event) {
-  const org = await Org.findOne().select('alertEmail name').lean();
+  const org = await Org.findOne({ _id: event.orgId }).select('alertEmail name').lean();
   if (!org?.alertEmail) return;
 
   const html = `

@@ -1,148 +1,238 @@
-// backend/src/routes/events.js
 /**
  * Shadow AI Auditor — Events Routes
- * POST /api/events       — single event from extension
- * POST /api/events/batch — batch events from service worker
+ * POST /api/events       — single event from an authenticated user or device
+ * POST /api/events/batch — batch events from an authenticated user or device
  * GET  /api/events       — dashboard (auth required)
  */
 import { Router } from 'express';
 import { z } from 'zod';
-import { Event, User } from '../models/index.js';
-import { authMiddleware } from '../middleware/auth.js';
+import { Event, EventReplay, User, Org, AuditLog } from '../models/index.js';
+import { authMiddleware, requireDeviceAuth, requireUserAuth } from '../middleware/auth.js';
 import { sendSlackAlert, sendEmailAlert } from '../services/alerting.js';
-import { broadcastAlert } from '../server.js';
 import { recalcSecurityScore } from '../services/scoring.js';
+import { evaluatePolicy } from '../services/policy-engine.js';
+import { createEventFingerprint, EVENT_REPLAY_WINDOW_MS } from '../utils/event-replay.js';
+import { clampPagination } from '../utils/pagination.js';
+import { broadcastTenantAlert } from '../services/websocket.js';
 import logger from '../utils/logger.js';
 
 const router = Router();
 
-// ─── Validation schemas ───────────────────────────────────────────────────────
-
 const EventSchema = z.object({
-  userId:        z.string().max(64),
-  domain:        z.string().max(100),
-  eventType:     z.enum(['paste','typing','modal_cancel','modal_proceed']),
-  riskScore:     z.number().min(0).max(100),
-  severity:      z.enum(['LOW','MEDIUM','HIGH']),
+  idempotencyKey: z.string().min(16).max(128),
+  domain: z.string().trim().toLowerCase().min(1).max(253).regex(/^[a-z0-9.-]+$/),
+  eventType: z.enum(['paste', 'typing', 'modal_cancel', 'modal_proceed']),
+  riskScore: z.number().min(0).max(100),
+  severity: z.enum(['LOW', 'MEDIUM', 'HIGH', 'CRITICAL']), // Added CRITICAL for client telemetry if they send it
   maskedPreview: z.string().max(200).optional(),
   findingLabels: z.array(z.string().max(60)).max(20).optional(),
-  timestamp:     z.string().datetime().optional(),
-});
+  timestamp: z.string().datetime().refine(value => {
+    const age = Date.now() - Date.parse(value);
+    return age <= 10 * 60_000 && age >= -60_000;
+  }, 'timestamp outside accepted window'),
+}).strict();
 
-// ─── POST /api/events — single event ─────────────────────────────────────────
+export function resolveAuthenticatedEventContext(req) {
+  if (req.user?.authType !== 'device' || !req.user.deviceId) {
+    throw Object.assign(new Error('Registered device authentication required'), { status: 403 });
+  }
+  return {
+    orgId: req.user.orgId,
+    userId: req.user.userId,
+    deviceId: req.user.deviceId,
+  };
+}
 
-router.post('/', async (req, res) => {
+router.post('/', authMiddleware, requireDeviceAuth, async (req, res) => {
   try {
+    const context = resolveAuthenticatedEventContext(req);
     const data = EventSchema.parse(req.body);
-    await processEvent(data);
-    res.status(202).json({ ok: true });
+    const result = await ingestEvent(data, context, req);
+    return res.status(202).json({ ok: true, requestPrevented: false, ...result });
   } catch (err) {
+    if (err?.status === 401) return res.status(401).json({ error: err.message });
+    if (err?.status === 403) return res.status(403).json({ error: err.message });
     if (err instanceof z.ZodError) return res.status(400).json({ error: err.errors[0]?.message ?? 'Validation error' });
+    if (err?.code === 11000) return res.status(202).json({ ok: true, duplicate: true });
     logger.error('Event POST error', err);
-    res.status(500).json({ error: 'Internal error' });
+    return res.status(500).json({ error: 'Internal error' });
   }
 });
 
-// ─── POST /api/events/batch ───────────────────────────────────────────────────
+router.post('/batch', authMiddleware, requireDeviceAuth, async (req, res) => {
+  try {
+    const context = resolveAuthenticatedEventContext(req);
+    const events = req.body?.events;
+    if (!Array.isArray(events)) return res.status(400).json({ error: 'events must be array' });
+    if (events.length > 200) return res.status(400).json({ error: 'batch too large' });
 
-router.post('/batch', async (req, res) => {
-  const events = req.body?.events;
-  if (!Array.isArray(events)) return res.status(400).json({ error: 'events must be array' });
-  if (events.length > 200) return res.status(400).json({ error: 'batch too large' });
-
-  const results = await Promise.allSettled(
-    events.map(e => {
-      try { return processEvent(EventSchema.parse(e)); }
-      catch { return Promise.resolve(); } // skip invalid
-    })
-  );
-
-  const saved = results.filter(r => r.status === 'fulfilled').length;
-  res.status(202).json({ ok: true, saved });
+    const parsedEvents = events.map(payload => EventSchema.parse(payload));
+    const results = await Promise.allSettled(parsedEvents.map(data => ingestEvent(data, context, req)));
+    const saved = results.filter(result => result.status === 'fulfilled' && !result.value.duplicate).length;
+    const duplicates = results.filter(result => result.status === 'fulfilled' && result.value.duplicate).length;
+    return res.status(202).json({ ok: true, requestPrevented: false, saved, duplicates, rejected: results.length - saved - duplicates });
+  } catch (err) {
+    if (err?.status === 401) return res.status(401).json({ error: err.message });
+    if (err?.status === 403) return res.status(403).json({ error: err.message });
+    if (err instanceof z.ZodError) return res.status(400).json({ error: err.errors[0]?.message ?? 'Validation error' });
+    logger.error('Event batch POST error', err);
+    return res.status(500).json({ error: 'Internal error' });
+  }
 });
 
-// ─── GET /api/events — list (auth required) ───────────────────────────────────
+router.get('/', authMiddleware, requireUserAuth, async (req, res) => {
+  const { severity, domain, from, to } = req.query;
+  const { page, limit, skip } = clampPagination(req.query, { defaultLimit: 50, maxLimit: 200 });
+  const filter = { orgId: req.user.orgId };
 
-router.get('/', authMiddleware, async (req, res) => {
-  const { severity, domain, limit = 50, page = 1, from, to } = req.query;
-  const filter = {};
-
-  if (severity) filter.severity = severity.toUpperCase();
-  if (domain)   filter.domain   = domain;
+  if (severity) filter.severity = String(severity).toUpperCase();
+  if (domain) filter.domain = String(domain).slice(0, 253);
   if (from || to) {
     filter.timestamp = {};
-    if (from) filter.timestamp.$gte = new Date(from);
-    if (to)   filter.timestamp.$lte = new Date(to);
+    const fromDate = from ? new Date(from) : null;
+    const toDate = to ? new Date(to) : null;
+    if (fromDate && !Number.isNaN(fromDate.getTime())) filter.timestamp.$gte = fromDate;
+    if (toDate && !Number.isNaN(toDate.getTime())) filter.timestamp.$lte = toDate;
+    if (Object.keys(filter.timestamp).length === 0) delete filter.timestamp;
   }
 
   const [events, total] = await Promise.all([
     Event.find(filter)
       .sort({ timestamp: -1 })
-      .skip((+page - 1) * +limit)
-      .limit(+limit)
+      .skip(skip)
+      .limit(limit)
       .populate('userRef', 'name email department'),
     Event.countDocuments(filter),
   ]);
 
-  res.json({ events, total, page: +page, limit: +limit });
+  res.json({ events, total, page, limit });
 });
 
-// ─── GET /api/events/stats ─────────────────────────────────────────────────────
-
-router.get('/stats', authMiddleware, async (req, res) => {
-  const since = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000); // 30d
+router.get('/stats', authMiddleware, requireUserAuth, async (req, res) => {
+  const since = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000);
+  const filter = { orgId: req.user.orgId };
 
   const [bySeverity, byDomain, recentCount, totalCount] = await Promise.all([
     Event.aggregate([
-      { $match: { timestamp: { $gte: since } } },
+      { $match: { ...filter, timestamp: { $gte: since } } },
       { $group: { _id: '$severity', count: { $sum: 1 }, avgScore: { $avg: '$riskScore' } } },
     ]),
     Event.aggregate([
-      { $match: { timestamp: { $gte: since } } },
+      { $match: { ...filter, timestamp: { $gte: since } } },
       { $group: { _id: '$domain', count: { $sum: 1 } } },
       { $sort: { count: -1 } },
       { $limit: 10 },
     ]),
-    Event.countDocuments({ timestamp: { $gte: since } }),
-    Event.countDocuments(),
+    Event.countDocuments({ ...filter, timestamp: { $gte: since } }),
+    Event.countDocuments(filter),
   ]);
 
   res.json({ bySeverity, byDomain, recentCount, totalCount });
 });
 
-// ─── Core event processing ─────────────────────────────────────────────────────
+export async function ingestEvent(data, context, req) {
+  const keyFilter = { orgId: context.orgId, deviceId: context.deviceId, idempotencyKey: data.idempotencyKey };
+  if (await Event.findOne(keyFilter)) return { duplicate: true };
 
-async function processEvent(data) {
-  // Attempt to resolve userId → User
-  const userRef = data.userId
-    ? await User.findOne({ extensionUserId: data.userId }).select('_id').lean()
-    : null;
+  const now = new Date();
+  const fingerprint = createEventFingerprint(context, data);
+  const replayFilter = { orgId: context.orgId, deviceId: context.deviceId, fingerprint };
+  await EventReplay.deleteOne({ ...replayFilter, expiresAt: { $lte: now } });
+  if (await EventReplay.findOne({ ...replayFilter, expiresAt: { $gt: now } })) return { duplicate: true };
 
-  const event = await Event.create({
-    ...data,
-    userRef: userRef?._id,
-    timestamp: data.timestamp ? new Date(data.timestamp) : new Date(),
+  const replayRecord = { ...replayFilter, expiresAt: new Date(now.getTime() + EVENT_REPLAY_WINDOW_MS) };
+  try {
+    await EventReplay.create(replayRecord);
+  } catch (err) {
+    if (err?.code === 11000) return { duplicate: true };
+    throw err;
+  }
+
+  try {
+    const event = await processEvent(data, context, req);
+    return { duplicate: false, eventId: event?._id };
+  } catch (err) {
+    if (err?.code === 11000) return { duplicate: true };
+    throw err;
+  }
+}
+
+export async function processEvent(data, context, req) {
+  const org = await Org.findOne({ _id: context.orgId, lifecycleStatus: 'active' });
+  if (!org) {
+    throw Object.assign(new Error('Organization not found'), { status: 403 });
+  }
+
+  const userRef = await User.findOne({ _id: context.userId, orgId: context.orgId, isActive: true });
+  if (!userRef || userRef.optedOut) {
+    throw Object.assign(new Error('Active event owner required'), { status: 403 });
+  }
+
+  const findingLabels = data.findingLabels ?? [];
+  const decision = await evaluatePolicy({
+    orgId: context.orgId,
+    userRef,
+    findingLabels,
+    orgSettings: org.settings
   });
 
-  // Trigger alerts for HIGH severity
-  if (data.severity === 'HIGH' && !event.alerted) {
+  const receivedAt = new Date();
+  const clientTelemetry = {
+    riskScore: data.riskScore,
+    severity: data.severity,
+    findingLabels: findingLabels,
+    maskedPreview: data.maskedPreview ?? '',
+    clientTimestamp: data.timestamp,
+  };
+
+  const event = await Event.create({
+    orgId: context.orgId,
+    deviceId: context.deviceId,
+    userId: String(userRef.extensionUserId ?? userRef._id),
+    userRef: userRef._id,
+    idempotencyKey: data.idempotencyKey,
+    clientTelemetry,
+    domain: data.domain,
+    eventType: data.eventType,
+    // Server-derived values override client claims for the top-level schema
+    riskScore: decision.riskScore,
+    severity: decision.severity,
+    findingLabels: findingLabels,
+    maskedPreview: clientTelemetry.maskedPreview,
+    policyDecision: decision.decision,
+    policyReason: decision.reason,
+    policyVersion: decision.policyVersion ?? 0,
+    timestamp: receivedAt,
+  });
+
+  await AuditLog.create({
+    orgId: context.orgId,
+    action: 'event_policy_decision',
+    actor: userRef._id,
+    target: event._id.toString(),
+    changes: {
+      decision: decision.decision,
+      reason: decision.reason,
+      policyVersion: decision.policyVersion,
+      clientReportedSeverity: clientTelemetry.severity,
+      serverCalculatedSeverity: decision.severity,
+    },
+    ip: req.ip,
+    userAgent: req.headers['user-agent'],
+  });
+
+  if ((decision.severity === 'HIGH' || decision.severity === 'CRITICAL') && !event.alerted) {
     try {
-      await Promise.all([
-        sendSlackAlert(event),
-        sendEmailAlert(event),
-      ]);
-      await Event.findByIdAndUpdate(event._id, { alerted: true });
+      await Promise.all([sendSlackAlert(event), sendEmailAlert(event)]);
+      await Event.findOneAndUpdate({ _id: event._id, orgId: context.orgId }, { $set: { alerted: true } });
     } catch (err) {
       logger.warn('Alert send failed', err.message);
     }
 
-    // Real-time WebSocket broadcast to open dashboard tabs
-    broadcastAlert(event.toObject());
+    broadcastTenantAlert(event.toObject());
   }
 
-  // Recalculate org security score async (don't await — non-blocking)
-  recalcSecurityScore().catch(() => {});
-
+  recalcSecurityScore(context.orgId).catch(() => {});
   return event;
 }
 

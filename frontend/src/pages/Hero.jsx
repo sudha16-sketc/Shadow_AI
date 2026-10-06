@@ -99,14 +99,27 @@ export default function Hero() {
 
             <h2>Install SHADOW Extension</h2>
 
-            < img src="steps.png"></img>
+            <img src="/steps.png" alt="How to install the Shadow AI extension" />
+
+            <ol className="popupSteps">
+              <li>
+                Build it from source:
+                <code>cd shadow-extension && npm ci && npm run build:development</code>
+              </li>
+              <li>
+                Open <code>chrome://extensions</code>, enable Developer mode, choose
+                <em> Load unpacked</em> and select <code>shadow-extension/dist</code>.
+              </li>
+              <li>Pair the extension with the one-time code from Dashboard → Settings.</li>
+            </ol>
 
             <a
-              href="/downloads/shadow-ai.zip"
-              download
+              href="https://github.com/sudha16-sketc/Shadow_AI"
+              target="_blank"
+              rel="noreferrer"
               className="popupDownloadBtn"
             >
-              Download Extension ZIP
+              View source &amp; build instructions
             </a>
           </div>
         </div>

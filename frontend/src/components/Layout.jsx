@@ -8,6 +8,8 @@ const navItems = [
   { path: '/users',     label: 'Users',       icon: '◎' },
   { path: '/analytics', label: 'Analytics',   icon: '↗' },
   { path: '/settings',  label: 'Settings',    icon: '⚙' },
+  { path: '/justifications', label: 'Justifications', icon: '✓' },
+  { path: '/audit-log',      label: 'Audit Log',      icon: '≡' },
 ];
 
 export default function Layout() {

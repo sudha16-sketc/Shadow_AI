@@ -1,6 +1,6 @@
 // shadow-extension/src/popup.js
 document.addEventListener("DOMContentLoaded", () => {
-  const BASE_URL = "http://localhost:5173";
+  const BASE_URL = import.meta.env.VITE_DASHBOARD_URL || "http://localhost:5173";
   const monitoredSites = [
     "chat.openai.com",
     "claude.ai",
@@ -12,17 +12,7 @@ document.addEventListener("DOMContentLoaded", () => {
     "bard.google.com",
   ];
 
-  chrome.storage.sync.get(["userId", "enabled", "sessionStats"], (data) => {
-    let userId = data.userId;
-
-    if (!userId) {
-      userId = "user_" + Math.random().toString(36).slice(2, 10);
-      chrome.storage.sync.set({ userId });
-    }
-
-    const el = document.getElementById("user-id");
-    if (el) el.textContent = userId;
-
+  chrome.storage.sync.get(["enabled", "sessionStats"], (data) => {
     const enabled = data.enabled !== false;
 
     const toggle = document.getElementById("monitoring-toggle");
@@ -42,6 +32,11 @@ document.addEventListener("DOMContentLoaded", () => {
     if (statHigh) statHigh.textContent = stats.high;
   });
 
+  chrome.storage.local.get(["deviceId"], ({ deviceId }) => {
+    const status = document.getElementById('device-status');
+    if (status) status.textContent = deviceId ? `Connected · ${deviceId.slice(0, 8)}` : 'Not connected';
+  });
+
   chrome.tabs.query({ active: true, currentWindow: true }, (tabs) => {
     const url = tabs[0]?.url ?? "";
 
@@ -58,7 +53,9 @@ document.addEventListener("DOMContentLoaded", () => {
         el.className =
           "site-name " + (isMonitored ? "site-monitored" : "site-safe");
       }
-    } catch {}
+    } catch {
+      /* URL parsing is best-effort; the popup still renders */
+    }
   });
 
   document
@@ -81,16 +78,22 @@ document.addEventListener("DOMContentLoaded", () => {
     }
   }
 
-  document.getElementById("copy-btn")?.addEventListener("click", () => {
-    const userId = document.getElementById("user-id")?.textContent;
-    if (!userId) return;
+  document.getElementById('connect-device')?.addEventListener('click', () => {
+    const input = document.getElementById('pairing-code');
+    const status = document.getElementById('device-status');
+    const button = document.getElementById('connect-device');
+    if (!input?.value || !status || !button) return;
 
-    navigator.clipboard.writeText(userId).then(() => {
-      const btn = document.getElementById("copy-btn");
-      if (!btn) return;
-
-      btn.textContent = "Copied!";
-      setTimeout(() => (btn.textContent = "Copy"), 1500);
+    button.disabled = true;
+    status.textContent = 'Connecting…';
+    chrome.runtime.sendMessage({ type: 'REGISTER_DEVICE', code: input.value.trim() }, result => {
+      button.disabled = false;
+      input.value = '';
+      if (chrome.runtime.lastError || !result?.ok) {
+        status.textContent = result?.error ?? 'Enrollment failed.';
+        return;
+      }
+      status.textContent = `Connected · ${result.deviceId.slice(0, 8)}`;
     });
   });
 

@@ -8,7 +8,11 @@ import EventsPage from './pages/Events';
 import UsersPage from './pages/Users';
 import AnalyticsPage from './pages/Analytics';
 import SettingsPage from './pages/Settings';
+import AuditLogPage from './pages/AuditLog';
+import JustificationsPage from './pages/Justifications';
 import Hero from './pages/Hero';
+
+const API_BASE = import.meta.env.VITE_API_URL ?? 'http://localhost:3001';
 
 function PrivateRoute({ children }) {
   const token = useAuthStore(s => s.token);
@@ -16,23 +20,34 @@ function PrivateRoute({ children }) {
 }
 
 export default function App() {
+  const token = useAuthStore(s => s.token);
+
   useEffect(() => {
-  const ws = new WebSocket("ws://localhost:3001");
+    if (!token) return undefined;
+    let socket;
+    let cancelled = false;
 
-  ws.onmessage = (msg) => {
-    const data = JSON.parse(msg.data);
+    fetch(`${API_BASE}/api/auth/ws-ticket`, {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${token}` },
+    })
+      .then(response => response.ok ? response.json() : null)
+      .then(data => {
+        if (cancelled || !data?.ticket) return;
+        const wsBase = API_BASE.replace(/^http/, 'ws');
+        socket = new WebSocket(`${wsBase}/api/alerts?ticket=${encodeURIComponent(data.ticket)}`);
+        socket.onmessage = message => {
+          const event = JSON.parse(message.data);
+          if (event.type === 'ALERT') window.location.reload();
+        };
+      })
+      .catch(() => {});
 
-    if (data.type === "ALERT") {
-      console.log("REALTIME EVENT:", data.event);
-
-      // reload dashboard instantly
-      window.location.reload(); 
-      // OR call loadData() if you extract it
-    }
-  };
-
-  return () => ws.close();
-}, []);
+    return () => {
+      cancelled = true;
+      socket?.close();
+    };
+  }, [token]);
   return (
     <BrowserRouter>
       <Routes>

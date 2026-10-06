@@ -188,7 +188,7 @@
     <div class="logo">⚔</div>
     <div>
       <div class="title">Shadow AI Auditor</div>
-      <div class="subtitle">Data Leak Prevention</div>
+      <div class="subtitle">Sensitive data detection</div>
     </div>
   </div>
 
@@ -235,13 +235,12 @@
     <span class="site-name" id="current-site">—</span>
   </div>
 
-  <!-- Extension User ID -->
+  <!-- Device enrollment -->
   <div class="uid-row">
-    <div class="uid-label">Your Extension User ID — copy to dashboard</div>
-    <div class="uid-val">
-      <span id="user-id">Loading…</span>
-      <button class="copy-btn" id="copy-btn" title="Copy to clipboard">Copy</button>
-    </div>
+    <label class="uid-label" for="pairing-code">Pairing code from dashboard Settings</label>
+    <input id="pairing-code" type="password" autocomplete="off" spellcheck="false" placeholder="One-time code" style="width:100%;margin:5px 0;padding:7px 8px;background:#171722;color:#fff;border:1px solid rgba(255,255,255,.12);border-radius:6px;font:11px monospace" />
+    <button class="btn btn-primary" id="connect-device" style="width:100%">Connect device</button>
+    <div id="device-status" role="status" style="margin-top:6px;font-size:10px;color:#9494a8"></div>
   </div>
 
   <!-- Buttons -->

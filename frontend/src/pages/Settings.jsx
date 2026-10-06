@@ -86,6 +86,9 @@ export default function SettingsPage() {
   const api = useApi();
   const [org, setOrg] = useState(null);
   const [loading, setLoading] = useState(true);
+  const [pairingCode, setPairingCode] = useState('');
+  const [pairingExpiry, setPairingExpiry] = useState('');
+  const [creatingPairingCode, setCreatingPairingCode] = useState(false);
 
   // Org general
   const [orgName, setOrgName] = useState('');
@@ -106,7 +109,7 @@ export default function SettingsPage() {
   const [emailMsg, setEmailMsg] = useState(null);
 
   // Policy
-  const [policy, setPolicy] = useState({ blockOnHigh: false, requireJustification: false, alertOnMedium: false });
+  const [policy, setPolicy] = useState({ defaultAction: 'BLOCK', blockOnHigh: true, requireJustification: true, alertOnMedium: true });
   const [savingPolicy, setSavingPolicy] = useState(false);
   const [policyMsg, setPolicyMsg] = useState(null);
 
@@ -213,6 +216,23 @@ export default function SettingsPage() {
     }
   }
 
+  async function createPairingCode() {
+    setCreatingPairingCode(true);
+    setPairingCode('');
+    try {
+      const result = await api('/api/auth/device/enrollment-code', {
+        method: 'POST',
+        body: JSON.stringify({ label: 'Browser Extension' }),
+      });
+      setPairingCode(result.code);
+      setPairingExpiry(result.expiresAt);
+    } catch (error) {
+      flash(setPolicyMsg, 'error', error.message);
+    } finally {
+      setCreatingPairingCode(false);
+    }
+  }
+
   async function addDomain() {
     const d = newDomain.trim().toLowerCase();
     if (!d || domains.includes(d)) return;
@@ -253,6 +273,16 @@ export default function SettingsPage() {
         <h1 className="text-2xl font-bold text-white">Settings</h1>
         <p className="text-sm text-gray-500 mt-1">Manage your organisation, alerting, and detection policy</p>
       </div>
+
+      <Section title="Extension enrollment" description="Create a single-use code for a registered browser device. It expires after five minutes.">
+        <div className="flex flex-wrap items-center gap-3">
+          <SaveButton onClick={createPairingCode} saving={creatingPairingCode} label="Generate pairing code" />
+          {pairingCode && <code className="max-w-full break-all rounded-lg border border-white/10 bg-white/[0.04] px-3 py-2 font-mono text-xs text-white">{pairingCode}</code>}
+          {pairingCode && <button onClick={() => navigator.clipboard.writeText(pairingCode)} className="text-sm text-gray-300 hover:text-white">Copy</button>}
+        </div>
+        {pairingExpiry && <p className="mt-2 text-xs text-gray-500">Expires {new Date(pairingExpiry).toLocaleTimeString()}</p>}
+        <p className="mt-2 text-xs text-gray-500">Enter this code in the extension popup. The device token is issued once and stored by the extension background service worker.</p>
+      </Section>
 
       {/* ── Security Score ─────────────────────────────────────────────────── */}
       <div className="rounded-xl border border-white/[0.07] bg-gradient-to-r from-white/[0.03] to-transparent p-5 flex items-center gap-5 mb-6">
@@ -341,10 +371,17 @@ export default function SettingsPage() {
       </Section>
 
       {/* ── Detection Policy ──────────────────────────────────────────────── */}
-      <Section title="Detection Policy" description="Control how the extension responds when sensitive data is detected">
+      <Section title="Detection Policy" description="The backend records this tenant action for each reported event. It does not prevent the AI request from reaching its destination.">
+        <Field label="Server policy decision" hint="Applied independently of extension-reported severity or risk score">
+          <select value={policy.defaultAction ?? 'BLOCK'} onChange={e => setPolicy(p => ({ ...p, defaultAction: e.target.value }))} className="bg-white/[0.05] border border-white/10 rounded-xl px-3 py-2 text-sm text-white outline-none">
+            <option value="ALLOW">ALLOW</option>
+            <option value="WARN">WARN</option>
+            <option value="BLOCK">BLOCK</option>
+          </select>
+        </Field>
         <Field
-          label="Block on HIGH risk"
-          hint="Prevent the user from submitting to AI tools when HIGH severity is detected. The modal Cancel button clears the input.">
+          label="Show local warning for HIGH risk"
+          hint="This extension-side interaction can be bypassed and is not a server-enforced network block.">
           <Toggle
             checked={policy.blockOnHigh}
             onChange={v => setPolicy(p => ({ ...p, blockOnHigh: v }))}
