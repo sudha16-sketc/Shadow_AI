@@ -89,7 +89,7 @@ const SEVERITY_LEVELS = { 'LOW': 1, 'MEDIUM': 2, 'HIGH': 3, 'CRITICAL': 4 };
 
 // ─── 3. Policy Evaluation ─────────────────────────────────────────────────────
 
-const POLICY_ACTIONS = new Set(['ALLOW', 'WARN', 'SANITIZE', 'BLOCK']);
+export const POLICY_ACTIONS = new Set(['ALLOW', 'WARN', 'SANITIZE', 'BLOCK']);
 
 export async function evaluatePolicy({ orgId, userRef, findingLabels, orgSettings }) {
   const normalized = normalizeDetections(findingLabels);

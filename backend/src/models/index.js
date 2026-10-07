@@ -45,7 +45,7 @@ const OrgSchema = new Schema({
     requireJustification: { type: Boolean, default: true },
     alertOnMedium:     { type: Boolean, default: true },
     retentionDays:     { type: Number, default: 90 },
-    defaultAction:     { type: String, enum: ['ALLOW', 'WARN', 'BLOCK'], default: 'BLOCK' },
+    defaultAction:     { type: String, enum: ['ALLOW', 'WARN', 'SANITIZE', 'BLOCK'], default: 'BLOCK' },
   },
   policyVersion:  { type: Number, default: 1 },
 }, { timestamps: true });

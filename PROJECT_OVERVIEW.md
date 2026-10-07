@@ -56,7 +56,7 @@ Language/runtime: Node.js 20+ (CommonJS-free ESM), MongoDB 7, React 18.
 
 | Area | State |
 |---|---|
-| Backend tests | **90 passing** (`cd backend && npm test`) |
+| Backend tests | **99 passing** (6 suites, `cd backend && npm test`) |
 | Extension tests | **10 passing** (`cd shadow-extension && npm run test:config`) |
 | Backend lint | no ESLint config (not configured — see `PRODUCTION_GAP_ANALYSIS.md`) |
 | Frontend lint | `npm run lint` — 0 errors, 9 warnings |
@@ -88,7 +88,7 @@ implementation would be worse than none during an evaluation.
 | `backend/src/routes/gateway.js` | Policy enforcement, sanitisation, upstream proxy |
 | `backend/src/services/policy-engine.js` | Server-authoritative decision logic |
 | `backend/src/middleware/auth.js` | JWT / device credential verification, tenant + role checks |
-| `backend/tests/` | 5 suites: 43 pre-existing + 47 security regression |
+| `backend/tests/` | 6 suites: 43 pre-existing + 56 security/schema contract |
 | `shadow-extension/src/content.js` | Detection, warnings, submit interception |
 | `frontend/src/pages/` | Overview, Events, Analytics, Users, Justifications, AuditLog, Settings |
 | `PROJECT_OVERVIEW.md` | This file |

@@ -30,7 +30,7 @@ must never contain real values.
 
 | Step | Command | Expect |
 |---|---|---|
-| Backend tests | `cd backend && npm test` | 90 passed |
+| Backend tests | `cd backend && npm test` | 99 passed |
 | Extension tests | `cd shadow-extension && npm run test:config` | 10 passed |
 | Extension lint | `cd shadow-extension && npm run lint` | clean |
 | Frontend lint | `cd frontend && npm run lint` | 0 errors |
@@ -77,7 +77,8 @@ npm test -- -t "SANITIZE"          # by test name
 operator  → npm run provision:platform-admin   (PLATFORM_ADMIN_EMAIL/PASSWORD)
 platform  → POST /api/platform-admin/auth/login
           → POST /api/platform-admin/tenants                    → tenant created
-          → POST /api/platform-admin/tenants/:id/invitations    → 24h single-use token
+                                                       + invitation token (24h, single use)
+          → POST /api/platform-admin/tenants/:id/invitations    → re-issue/replace an invite
 invitee   → POST /api/platform-admin/invitations/accept         → tenant active + first admin
 admin     → dashboard: create users, pair devices, set policy
 user      → POST /api/auth/login → POST /api/auth/device/enrollment-code

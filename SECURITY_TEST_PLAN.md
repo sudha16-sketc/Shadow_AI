@@ -105,6 +105,11 @@ into new files.
 | F7 | Analytics window bounded | `bounds the analytics window instead of accepting arbitrary values` |
 | F8 | CSV formula injection neutralised | `audit export › neutralises spreadsheet formula injection` |
 | F9 | Malformed event payload / idempotency replay | phase1 baseline |
+| F10 | `__proto__` in an auth body cannot pollute `Object.prototype` | `input validation › rejects prototype-pollution payloads in authentication bodies` |
+| F11 | `constructor.prototype` payload on ingestion rejected safely | `rejects a constructor.prototype pollution attempt on event ingestion` |
+| F12 | Unknown policy action → 400 and not stored | `rejects an unknown policy action instead of storing it` |
+| F13 | Array/null where a scalar enum is expected → 400 | `rejects arrays and nulls where a scalar enum is expected` |
+| F14 | Control characters / broken encodings in a query → no 500 | `handles hostile control characters in query input without a 500` |
 
 ### G. SSRF on operator-supplied callbacks
 
@@ -151,6 +156,31 @@ into new files.
 | K3 | Host permissions scoped to HTTPS AI sites | `host permissions stay scoped to supported AI sites` |
 | K4 | Minimal permission set | `requested API permissions are minimal` |
 | K5 | Staging/production refuse local or non-HTTPS origins | `build-config.test.js` (4 cases) |
+
+### L. Schema ↔ API ↔ policy-engine contract
+
+| # | Property | Test |
+|---|---|---|
+| L1 | Every action the API accepts is storable in MongoDB | `schema-contract › stores every action the API can select` |
+| L2 | An action no layer understands is refused by the database | `refuses an action that no layer understands` |
+| L3 | Policy-engine and database action sets are identical | `the policy engine and the database agree on the action set` |
+| L4 | `CRITICAL` / `PREVENTED` are storable severities | `events can record the CRITICAL severity the detector emits` |
+
+### M. Container smoke (real stack, mocked nothing)
+
+Run against `docker compose up -d --build` with a fresh volume
+(`tests/` → `/tmp/opencode/smoke.py` script used for the report run).
+
+| # | Property | Check |
+|---|---|---|
+| M1 | `/health` and `/ready` answer without leaking internals | HTTP 200, body contains only `status`/`ts` |
+| M2 | Onboarding: platform login → tenant + bundled invitation → accept → tenant login | HTTP 201/200 |
+| M3 | Cross-tenant `orgId` query parameter ignored; user list scoped | foreign rows absent |
+| M4 | `BLOCK` → 403, event `PREVENTED`, `requestForwarded=false` | gateway response + stored event |
+| M5 | Client-supplied severity/decision/orgId ignored end to end | server values in stored event |
+| M6 | `SANITIZE` → event `SANITIZED` with `sanitizedRedactions>0` | provider answered 401 (no credential) |
+| M7 | `ALLOW` → `requestForwarded=true` (`FORWARDED`) | upstream attempt observed |
+| M8 | Unknown enum → 400, unknown route → JSON 404, bad/malformed token → 401 | API responses |
 
 ## 4. Coverage of the documented gaps
 

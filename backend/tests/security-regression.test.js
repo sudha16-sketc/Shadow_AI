@@ -449,6 +449,55 @@ describe('input validation', () => {
     expect(emails).not.toContain('victim@example.test');
   });
 
+  it('rejects prototype-pollution payloads in authentication bodies', async () => {
+    const res = await httpRequest('/api/auth/login', {
+      method: 'POST',
+      raw: JSON.stringify({ email: 'a@b.test', password: 'password', __proto__: { polluted: 'yes' } }),
+      headers: { 'Content-Type': 'application/json' },
+    });
+    expect([400, 401]).toContain(res.status);
+    expect({}.polluted).toBeUndefined();
+    expect(Object.prototype.polluted).toBeUndefined();
+  });
+
+  it('rejects a constructor.prototype pollution attempt on event ingestion', async () => {
+    const res = await httpRequest('/api/events', {
+      method: 'POST',
+      token,
+      body: { constructor: { prototype: { polluted: 'yes' } } },
+    });
+    expect(res.status).toBeGreaterThanOrEqual(400);
+    expect(res.status).toBeLessThan(500);
+    expect({}.polluted).toBeUndefined();
+  });
+
+  it('rejects an unknown policy action instead of storing it', async () => {
+    const res = await httpRequest('/api/settings/org/policy', {
+      method: 'PATCH', token, body: { defaultAction: 'DROP_ALL' },
+    });
+    expect(res.status).toBe(400);
+    expect(org.settings.defaultAction).not.toBe('DROP_ALL');
+  });
+
+  it('rejects arrays and nulls where a scalar enum is expected', async () => {
+    const asArray = await httpRequest('/api/settings/org/policy', {
+      method: 'PATCH', token, body: { defaultAction: ['BLOCK'] },
+    });
+    expect(asArray.status).toBe(400);
+
+    const asNull = await httpRequest('/api/settings/org/policy', {
+      method: 'PATCH', token, body: { defaultAction: null },
+    });
+    expect(asNull.status).toBe(400);
+  });
+
+  it('handles hostile control characters in query input without a 500', async () => {
+    const hostile = '%00%1B%5B31m%E2%80%AEevil%0Ainjected';
+    const res = await httpRequest(`/api/users?search=${hostile}`, { token });
+    expect(res.status).toBe(200);
+    expect(Array.isArray(res.data.users)).toBe(true);
+  });
+
   it('bounds the analytics window instead of accepting arbitrary values', async () => {
     const res = await httpRequest('/api/analytics/overview?days=99999999', { token });
     expect(res.status).toBe(200);

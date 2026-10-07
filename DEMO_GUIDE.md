@@ -1,8 +1,10 @@
 # Demo Guide
 
 A 15-minute script for showing the PoC to a potential collaborator. Everything
-below runs locally, needs no AI-provider account, and never contacts a
-third-party system.
+runs locally and needs no AI-provider account: `BLOCK` and the malicious-client
+demos make **no outbound calls at all**. Only the optional `SANITIZE`/`ALLOW`
+steps let the gateway reach the provider — without a provider key the upstream
+simply answers `401`, which is enough to prove the request was forwarded.
 
 ---
 
@@ -11,34 +13,46 @@ third-party system.
 ```bash
 # one-time
 cp .env.example .env && cp backend/.env.example backend/.env
-node -e "console.log(require('crypto').randomBytes(48).toString('base64url'))"   # → backend/.env JWT_SECRET
-docker compose up -d --build          # or run backend/frontend separately
+node -e "console.log(require('crypto').randomBytes(48).toString('base64url'))"   # → .env JWT_SECRET
+docker compose up -d --build          # mongo + API :3001 + dashboard :5173
 ```
 
-Provision the platform administrator and a tenant:
+If `docker compose` cannot reach the daemon (rootless podman), start the socket
+first: `podman system service --time=0 unix:///tmp/podman.sock &` and run compose
+with `DOCKER_HOST=unix:///tmp/podman.sock`.
+
+Provision the platform administrator:
 
 ```bash
-cd backend
-PLATFORM_ADMIN_EMAIL=admin@example.test PLATFORM_ADMIN_PASSWORD='…' npm run provision:platform-admin
-
-# platform login → token
-TOKEN=$(curl -s localhost:3001/api/platform-admin/auth/login \
-  -H 'content-type: application/json' \
-  -d '{"email":"admin@example.test","password":"…"}' | jq -r .token)
-
-# create a tenant
-TENANT=$(curl -s localhost:3001/api/platform-admin/tenants \
-  -H "authorization: Bearer $TOKEN" -H 'content-type: application/json' \
-  -d '{"name":"Acme Corp","domain":"example.test"}' | jq -r .tenantId)
-
-# invite the tenant admin (single use, 24h)
-curl -s localhost:3001/api/platform-admin/tenants/$TENANT/invitations \
-  -H "authorization: Bearer $TOKEN" -H 'content-type: application/json' \
-  -d '{"email":"secadmin@example.test","role":"admin"}'
+docker compose exec -e PLATFORM_ADMIN_EMAIL=admin@example.test \
+  -e PLATFORM_ADMIN_PASSWORD='DemoAdminPassw0rd!2026' \
+  backend node scripts/provision-platform-admin.mjs
 ```
 
-Open the invitation link in the dashboard (`/signup`) to create the tenant
-admin, then sign in at `/`.
+Provision a tenant. **Tenant creation bundles the single-use admin invitation**
+(one call, not two):
+
+```bash
+TOKEN=$(curl -s localhost:3001/api/platform-admin/auth/login \
+  -H 'content-type: application/json' \
+  -d '{"email":"admin@example.test","password":"DemoAdminPassw0rd!2026"}' \
+  | jq -r .token)
+
+curl -s localhost:3001/api/platform-admin/tenants \
+  -H "authorization: Bearer $TOKEN" -H 'content-type: application/json' \
+  -d '{"name":"Acme Corp","adminName":"Sec Admin","adminEmail":"secadmin@example.test"}'
+# → {"tenant":{"id":"…","name":"Acme Corp"},"invitation":{"token":"…","expiresAt":"…"}}
+```
+
+Activate it with the returned invitation token (24 h, single use):
+
+```bash
+curl -s localhost:3001/api/platform-admin/invitations/accept \
+  -H 'content-type: application/json' \
+  -d '{"token":"<invitation token>","password":"AcmeAdminPassw0rd!2026"}'
+```
+
+Sign in at `/` as `secadmin@example.test` with that password.
 
 Build and load the extension:
 
@@ -50,7 +64,7 @@ cd shadow-extension && npm ci && npm run build:development
 Prove the suite is green (show this on screen):
 
 ```bash
-cd backend && npm test                      # 90 passed
+cd backend && npm test                      # 99 passed
 cd ../shadow-extension && npm run test:config   # 10 passed
 ```
 
@@ -145,27 +159,83 @@ Talking point: cookies and our own JWT are dropped; only the caller's
 call reaches OpenAI and returns 401 without a key — set the action back to BLOCK
 first to keep the demo fully offline.)
 
-**c. SANITIZE (optional — requires accepting one outbound request)**
+**c. SANITIZE (optional — the gateway contacts the provider)**
 
 ```bash
 curl -s -X PATCH localhost:3001/api/settings/org/policy \
   -H "authorization: Bearer $T" -H 'content-type: application/json' \
-  -d '{"defaultAction":"SANITIZE"}'
+  -d '{"defaultAction":"SANITIZE","blockOnHigh":false}'
 ```
+
+`blockOnHigh` is disabled on purpose: with it enabled a CRITICAL finding is
+blocked whatever the default action is, so the SANITIZE path would never run.
 
 Repeat (a), then show the event:
 `enforcementStatus = SANITIZED`, `sanitizedRedactions ≥ 2`. The forwarded
 payload contained `[REDACTED:Email Address]` and `[REDACTED:AWS Access Key]`,
 never the original strings. Skip this step if you want zero outbound calls.
 
-## 5. Minute 12–15 — how we know it works
+## 5. Demo 3 — the malicious client (1 minute, terminal)
+
+The attacker controls the extension payload. Show that nothing they send can
+downgrade the decision. With `defaultAction = BLOCK` still active:
+
+```bash
+curl -s -X POST localhost:3001/gateway/v1/openai/v1/chat/completions \
+  -H "authorization: Bearer $DVC" -H 'content-type: application/json' \
+  -d '{"model":"gpt-4",
+       "messages":[{"role":"user","content":"use key AKIAIOSFODNN7EXAMPLE"}],
+       "severity":"LOW","riskScore":0,"policyDecision":"ALLOW",
+       "orgId":"000000000000000000000000","userId":"attacker"}'
+```
+
+**Expected:** still `403`, and the stored event shows the *server's* answer —
+`severity=CRITICAL`, `policyDecision=BLOCK`, and the caller's own tenant (not the
+`orgId` that was submitted).
+
+Also show the trust boundary from the dashboard side:
+
+```bash
+curl -s -X PATCH localhost:3001/api/settings/org/policy \
+  -H "authorization: Bearer $T" -H 'content-type: application/json' \
+  -d '{"defaultAction":"DROP_ALL"}'        # → 400, unknown enum value
+```
+
+> "The client proposes; the server disposes. Every security field in the
+> request body is ignored — tests `ignores client-claimed severity, policy
+> decision and tenant fields` prove it."
+
+## 6. Demo 4 — cross-tenant attack (1 minute, terminal)
+
+As the **Acme** tenant admin, try to read **Globex** data:
+
+```bash
+# 1. claim another tenant in the query string
+curl -s "localhost:3001/api/events?orgId=<globex tenant id>" \
+  -H "authorization: Bearer $T"        # → only Acme events (orgId ignored)
+
+# 2. list users — Globex admins must not appear
+curl -s localhost:3001/api/users -H "authorization: Bearer $T"
+# → ["secadmin@example.test"]
+
+# 3. read another tenant's audit trail with a guessed id
+curl -s "localhost:3001/api/audit-log?orgId=<globex tenant id>" \
+  -H "authorization: Bearer $T"        # → Acme records only, never a 500
+```
+
+Then switch to the Globex session and repeat — each tenant sees only its own
+rows. The tests `rejects an explicit cross-tenant orgId parameter`,
+`never returns another tenant's audit records`, and `scopes gateway events to
+the authenticated tenant` cover the same property.
+
+## 7. Minute 12–15 — how we know it works
 
 Terminal, on screen:
 
 ```bash
 cd backend && npm test
-# Test Suites: 5 passed, 5 total
-# Tests:       90 passed, 90 total
+# Test Suites: 6 passed, 6 total
+# Tests:       99 passed, 99 total
 ```
 
 Then open:
@@ -181,7 +251,7 @@ Talking points:
 - "Response inspection reports but does not block — that is a documented gap,
   not an oversight."
 
-## 6. Obvious questions, short answers
+## 8. Obvious questions, short answers
 
 | Question | Answer |
 |---|---|
@@ -193,7 +263,7 @@ Talking points:
 | Can we run this behind a proxy? | Yes, with `TRUST_PROXY=true`; CSP/CORS are environment-driven. |
 | What is the biggest risk today? | Listed in `PRODUCTION_GAP_ANALYSIS.md` P0 (DNS-blind SSRF guard, no token rotation, no CI). |
 
-## 7. If something breaks
+## 9. If something breaks
 
 | Symptom | Fix |
 |---|---|
@@ -204,7 +274,7 @@ Talking points:
 | Rate limit 429 during the demo | Wait 60 minutes or restart the backend (limiters are per-process) |
 | `/ready` returns 503 | Mongo is down — expected, and worth showing |
 
-## 8. What not to claim
+## 10. What not to claim
 
 - Do not say "HIPAA/SOC 2 ready" — the control mapping does not exist yet.
 - Do not say responses are blocked — they are detected and audited.

@@ -63,6 +63,24 @@ infrastructure, secrets manager integration, policy simulation/sandbox mode.
 Adding any of these should start from `ARCHITECTURE.md` and a new threat model,
 not by patching the PoC.
 
+## Free-tier hosting limitations
+
+Applies to a demo deployment on free/low-cost hosts (Render/Railway/Fly/Heroku
+free tiers, free MongoDB Atlas, GitHub Pages-style static hosting):
+
+| Limitation | Impact | Handling in this PoC |
+|---|---|---|
+| Instance sleeps; cold start 10–30 s | first API call after idle is slow, may 503 | `/ready` returns 503 until Mongo reconnects; client retries; a pinger keeps it awake during a demo |
+| Single instance | rate limiter and WebSocket tickets are process-local | do not scale to 2+ instances without a shared store (P1) |
+| Ephemeral disk | container writes lost on redeploy | state lives in MongoDB only |
+| Outbound request timeouts | gateway calls can be cut mid-flight | `GATEWAY_TIMEOUT_MS` bounds the call; failures recorded as `FAILED` |
+| Free DB connection/record limits | cold starts and low quotas | small pooling defaults; no background batch jobs |
+| No private networking | the API is directly reachable | keep `TRUST_PROXY` and TLS termination at the host; never expose Mongo |
+| Websocket/push restrictions | live alert delivery may drop | dashboard reconnects and falls back to refresh |
+
+Do not redesign the architecture around one provider; these are deployment
+constraints, not product decisions.
+
 ## What is already in good shape
 
 - Tenant isolation and role checks, with tests for cross-tenant attempts.
@@ -72,12 +90,12 @@ not by patching the PoC.
 - Fail-closed sanitisation and fail-closed policy evaluation.
 - Credential hygiene: pinned algorithm, revocation via `authVersion`, hashed
   device credentials, no self-service signup.
-- Evidence culture: 100 automated tests, documented limitations, secret scans.
+- Evidence culture: 109 automated tests, documented limitations, secret scans.
 
 ## Recommended order of work
 
 1. Rotate real credentials and delete local `.env` values (P0-5).
-2. Add CI so today's 100 passing tests become a gate (P0-6).
+2. Add CI so today's 109 passing tests become a gate (P0-6).
 3. DNS-aware webhook validation (P0-1).
 4. HTTPS/WSS deployment story (P0-3).
 5. Token lifetime/rotation (P0-4).
