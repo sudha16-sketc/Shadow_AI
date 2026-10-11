@@ -632,6 +632,34 @@ describe('operational endpoints', () => {
     expect(res.status).toBe(404);
     expect(res.data).toEqual({ error: 'Not found' });
   });
+
+  it('formats structured request logs with rid, user, org, and error category without logging sensitive bodies', async () => {
+    const morgan = (await import('morgan')).default;
+    const req = {
+      id: 'rid-test-123',
+      user: { userId: 'usr-456', orgId: 'org-789' },
+      body: { password: 'super-secret-password-never-log', apiKey: 'sk-live-12345' },
+    };
+    const res401 = { statusCode: 401 };
+    const res403 = { statusCode: 403 };
+    const res500 = { statusCode: 500 };
+    const res200 = { statusCode: 200 };
+
+    expect(morgan['id'](req)).toBe('rid-test-123');
+    expect(morgan['user'](req)).toBe('usr-456');
+    expect(morgan['org'](req)).toBe('org-789');
+    expect(morgan['errcat'](req, res401)).toBe('auth_error');
+    expect(morgan['errcat'](req, res403)).toBe('authz_error');
+    expect(morgan['errcat'](req, res500)).toBe('server_error');
+    expect(morgan['errcat'](req, res200)).toBe('-');
+
+    // Assert that credentials/passwords in req.body are never part of morgan format tokens
+    const tokens = ['id', 'user', 'org', 'errcat'].map(t => morgan[t](req, res401));
+    for (const tokenVal of tokens) {
+      expect(String(tokenVal)).not.toContain('super-secret-password');
+      expect(String(tokenVal)).not.toContain('sk-live-12345');
+    }
+  });
 });
 
 // ─── Secret scanning ────────────────────────────────────────────────────────

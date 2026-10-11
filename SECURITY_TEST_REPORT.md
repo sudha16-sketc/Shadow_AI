@@ -20,8 +20,8 @@ below comes from a command executed in this workspace; nothing is inferred.
 
 ```
 $ cd backend && npm test
-Test Suites: 6 passed, 6 total
-Tests:       99 passed, 99 total
+Test Suites: 7 passed, 7 total
+Tests:       101 passed, 101 total
 ```
 
 | Suite | Tests |
@@ -30,8 +30,9 @@ Tests:       99 passed, 99 total
 | `tests/phase1-security.integration.test.js` (baseline) | 16 |
 | `tests/phase1-security.test.js` (baseline) | 7 |
 | `tests/policy-engine.test.js` (baseline) | 10 |
-| `tests/security-regression.test.js` | **52 (new)** |
-| `tests/schema-contract.test.js` | **4 (new)** |
+| `tests/security-regression.test.js` | **53** |
+| `tests/schema-contract.test.js` | 4 |
+| `tests/graceful-shutdown.integration.test.js` | **1 (new)** |
 
 The 43 pre-existing tests were not modified and still pass unchanged.
 
@@ -150,15 +151,16 @@ Cache-Control: no-store
 
 | Suite | Cases | Result |
 |---|---|---|
-| `security-regression.test.js` (new) | 52 | pass |
-| `schema-contract.test.js` (new) | 4 | pass |
+| `security-regression.test.js` | 53 | pass |
+| `schema-contract.test.js` | 4 | pass |
+| `graceful-shutdown.integration.test.js` | 1 | pass |
 | `gateway.integration.test.js` (baseline, untouched) | 10 | pass |
 | `phase1-security.integration.test.js` (baseline, untouched) | 16 | pass |
 | `phase1-security.test.js` (baseline, untouched) | 7 | pass |
 | `policy-engine.test.js` (baseline, untouched) | 10 | pass |
-| extension `security.test.js` (new) | 6 | pass |
-| extension `build-config.test.js` (new) | 4 | pass |
-| **Automated total** | **109** | **all pass** |
+| extension `security.test.js` | 6 | pass |
+| extension `build-config.test.js` | 4 | pass |
+| **Automated total** | **111** | **all pass** |
 | container smoke (`scripts/container-smoke.py`) | 29 | all pass |
 
 ### 2.2 By plan section (`SECURITY_TEST_PLAN.md` §3)
@@ -173,11 +175,11 @@ Cache-Control: no-store
 | F. Input validation & abuse (incl. CSV export, prototype pollution) | 13 | pass |
 | G. SSRF on operator-supplied callbacks | 7 | pass |
 | H. Rate limiting & CORS | 3 | pass |
-| I. Operational safety | 4 | pass |
+| I. Operational safety (health, readiness, correlation, logging, shutdown) | 6 | pass |
 | J. Secrets & privacy (backend + extension) | 4 | pass |
 | K. Extension packaging & build config | 8 | pass |
 | L. Schema ↔ API ↔ policy-engine contract | 4 | pass |
-| **New automated coverage** | **66** | **all pass** |
+| **New automated coverage** | **68** | **all pass** |
 | Phase 1 + gateway + policy-engine baseline | 43 | all pass |
 | M. Container smoke (real stack) | 29 | all pass |
 

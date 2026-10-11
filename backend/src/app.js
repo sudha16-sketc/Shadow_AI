@@ -89,7 +89,20 @@ export function createApp() {
   app.use(express.json({ limit: '50kb' }));
 
   morgan.token('id', req => req.id ?? '-');
-  app.use(morgan(':method :url :status :response-time ms rid=:id', {
+  morgan.token('user', req => req.user?.userId ?? req.platformAdmin?.id ?? '-');
+  morgan.token('org', req => req.user?.orgId ?? req.tenantId ?? '-');
+  morgan.token('errcat', (_req, res) => {
+    const status = res.statusCode;
+    if (status >= 500) return 'server_error';
+    if (status === 401) return 'auth_error';
+    if (status === 403) return 'authz_error';
+    if (status === 404) return 'not_found';
+    if (status === 429) return 'rate_limited';
+    if (status >= 400) return 'client_error';
+    return '-';
+  });
+
+  app.use(morgan(':method :url :status :response-time ms rid=:id user=:user org=:org err=:errcat', {
     skip: () => process.env.NODE_ENV === 'test',
     stream: { write: msg => logger.info(msg.trim()) },
   }));
@@ -154,13 +167,16 @@ export function createApp() {
       || err?.type === 'entity.too.large'
       || err instanceof SyntaxError;
 
+    const user = req.user?.userId ?? req.platformAdmin?.id ?? '-';
+    const org = req.user?.orgId ?? req.tenantId ?? '-';
+
     if (isBodyParseError || status === 400 || status === 413) {
-      logger.warn(`Bad request on ${req.method} ${req.originalUrl} rid=${req.id}`);
+      logger.warn(`Bad request on ${req.method} ${req.originalUrl} rid=${req.id} user=${user} org=${org} err=client_error`);
       return res.status(err?.status ?? (err?.type === 'entity.too.large' ? 413 : 400))
         .json({ error: err?.type === 'entity.too.large' ? 'Payload too large' : 'Invalid request body', requestId: req.id });
     }
 
-    logger.error(`Unhandled error on ${req.method} ${req.originalUrl} rid=${req.id}`, err);
+    logger.error(`Unhandled error on ${req.method} ${req.originalUrl} rid=${req.id} user=${user} org=${org} err=server_error`, err);
     res.status(status ?? 500).json({ error: 'Internal error', requestId: req.id });
   });
 

@@ -87,7 +87,12 @@ if (process.argv[1] && fileURLToPath(import.meta.url) === process.argv[1]) {
 
   process.on('SIGTERM', () => shutdown('SIGTERM'));
   process.on('SIGINT', () => shutdown('SIGINT'));
+  process.on('message', (msg) => {
+    if (msg === 'SIGTERM' || msg === 'shutdown') shutdown('SIGTERM');
+  });
   process.on('unhandledRejection', (reason) => {
     logger.error('Unhandled promise rejection', reason);
   });
 }
+
+export { httpServer, PORT };

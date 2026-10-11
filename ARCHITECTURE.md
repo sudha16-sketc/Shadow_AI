@@ -141,6 +141,32 @@ Multi-tenant isolation is enforced by scoping **every** query to
 `req.user.orgId`, plus `requireTenantAccess` which rejects a request that names
 a different `orgId` in params, query, or body.
 
+### 5.1 Schema Versioning & Migration Strategy
+
+For this PoC and collaborating-team deployments, schema evolution follows an additive, backward-compatible model without heavyweight migration frameworks:
+
+1. **Schema Version Tracking & Contract Guarantees:**
+   - Schemas managing active business rules carry integer versions (e.g. `Org.policyVersion`, `Policy.version`, and `Event.policyVersion`).
+   - Every selectable API action and severity level is strictly verified against database enum constraints at test time via contract tests (`backend/tests/schema-contract.test.js`), preventing silent deserialization or storage errors.
+
+2. **Index Lifecycle & Startup Synchronization:**
+   - Mongoose automatic index creation is explicitly disabled (`autoIndex: false`) in `startServer()` (`backend/src/server.js`) to eliminate unpredictable index build blocking in multi-instance or high-throughput scenarios.
+   - Declarative indexes (including TTL indexes on `events`/`eventreplays` and sparse compound unique indexes on idempotency keys) are synced synchronously upon startup via `Model.createIndexes()`.
+   - Legacy or superseded index names are safely dropped with defensive error code handling (`IndexNotFound`, `NamespaceNotFound`) before applying new indexes.
+
+3. **Additive-Only Evolution & Backward Compatibility (Expand/Contract):**
+   - **Phase 1 (Expand):** New attributes are introduced with sensible Mongoose schema defaults (e.g. `sanitizedRedactions: { type: Number, default: 0 }`, `responseFindingLabels: { type: [String], default: [] }`). Application code is designed to read documents where new fields may be omitted, treating missing keys as default values.
+   - **Phase 2 (Migrate/Dual-Write):** If data restructuring is required, application code writes to both old and new shapes, reading from the new shape with fallback to the old.
+   - **Phase 3 (Contract):** Old fields are deprecated only after an agreed version deprecation window, without breaking running instances.
+
+4. **Rollback & Failure Handling:**
+   - In the event of a deployment failure or rollback to an older backend revision, additive fields in MongoDB 7 documents are ignored by older Mongoose schemas without fatal validation errors.
+   - Database rollbacks do not require destructive rollbacks of document contents; schema backward-compatibility ensures the prior backend version continues to function safely.
+
+5. **Deployment Sequencing:**
+   - The deployment sequence is strictly: **Database Online → Startup Schema & Index Sync → Traffic Ingestion**.
+   - The `/ready` probe gates external traffic until MongoDB is connected and initial index lifecycle operations are complete.
+
 ## 6. Detection and scoring
 
 Two copies of the pattern set exist by design:
