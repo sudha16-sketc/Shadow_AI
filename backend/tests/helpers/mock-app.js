@@ -12,6 +12,7 @@
  */
 import { randomBytes, randomUUID } from 'node:crypto';
 import http, { createServer } from 'node:http';
+import { fileURLToPath } from 'node:url';
 import { jest } from '@jest/globals';
 import jwt from 'jsonwebtoken';
 
@@ -154,22 +155,27 @@ export const Policy = {
   })),
 };
 
-jest.unstable_mockModule('../src/models/index.js', () => ({
+// Resolve mock targets relative to THIS file so registration does not depend on
+// which test file imported the harness (jest otherwise resolves the specifier
+// relative to the importing test, which made standalone runs fail).
+const srcUrl = (relativePath) => fileURLToPath(new URL(relativePath, import.meta.url));
+
+jest.unstable_mockModule(srcUrl('../../src/models/index.js'), () => ({
   User, Org, Device, Event, EventReplay, Justification,
   AuditLog, PlatformAdmin, TenantInvitation, PlatformAuditLog,
   Team: {}, Policy,
 }));
 
-jest.unstable_mockModule('../src/services/alerting.js', () => ({
+jest.unstable_mockModule(srcUrl('../../src/services/alerting.js'), () => ({
   sendSlackAlert: jest.fn().mockResolvedValue(undefined),
   sendEmailAlert: jest.fn().mockResolvedValue(undefined),
 }));
 
-jest.unstable_mockModule('../src/services/scoring.js', () => ({
+jest.unstable_mockModule(srcUrl('../../src/services/scoring.js'), () => ({
   recalcSecurityScore: jest.fn().mockResolvedValue(undefined),
 }));
 
-jest.unstable_mockModule('../src/server.js', () => ({
+jest.unstable_mockModule(srcUrl('../../src/server.js'), () => ({
   broadcastAlert: jest.fn(),
 }));
 

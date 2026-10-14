@@ -5,12 +5,12 @@ import { useAuthStore } from "../hooks/useAuth";
 
 const API = import.meta.env.VITE_API_URL ?? "http://localhost:3001";
 
-const Signup = () => {
+const Signup = ({ initialLogin = false }) => {
   const [username, setUsername] = useState("");
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [status, setStatus] = useState("");
-  const [isLogin, setIsLogin] = useState(false);
+  const [isLogin, setIsLogin] = useState(initialLogin);
 
   const login = useAuthStore((s) => s.login);
   const logout = useAuthStore((s) => s.logout);
@@ -159,6 +159,12 @@ const Signup = () => {
               SIGN OUT
             </button>
           )}
+          <p style={{ marginTop: '0.75rem', fontSize: '0.75rem' }}>
+            Platform administrator?{" "}
+            <a href="/platform/login" style={{ textDecoration: "underline" }}>
+              Use the platform console
+            </a>
+          </p>
         </div>
       </div>
 

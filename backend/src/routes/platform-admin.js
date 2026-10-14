@@ -125,6 +125,46 @@ router.post('/invitations/accept', async (req, res) => {
 
 router.use(platformAdminAuthMiddleware);
 
+// GET /api/platform-admin/tenants — list tenants for the platform console.
+// Returns lifecycle status and the email of any outstanding invitation. The
+// invitation token itself is only ever returned once, at creation/re-issue.
+router.get('/tenants', async (req, res) => {
+  const requestedLimit = Number.parseInt(req.query.limit, 10);
+  const limit = Number.isInteger(requestedLimit)
+    ? Math.min(Math.max(requestedLimit, 1), 200)
+    : 100;
+
+  try {
+    const orgs = await Org.find({}).sort({ createdAt: -1 }).limit(limit).lean();
+    const orgIds = orgs.map(org => org._id);
+    const pendingInvitations = orgIds.length === 0
+      ? []
+      : await TenantInvitation.find({
+        orgId: { $in: orgIds },
+        status: 'pending',
+        usedAt: null,
+        expiresAt: { $gt: new Date() },
+      }).lean();
+
+    const pendingByOrg = new Map(
+      pendingInvitations.map(invitation => [String(invitation.orgId), invitation.email]),
+    );
+
+    return res.json({
+      tenants: orgs.map(org => ({
+        id: org._id,
+        name: org.name,
+        lifecycleStatus: org.lifecycleStatus,
+        activatedAt: org.activatedAt ?? null,
+        createdAt: org.createdAt ?? null,
+        pendingInvitationEmail: pendingByOrg.get(String(org._id)) ?? null,
+      })),
+    });
+  } catch {
+    return res.status(500).json({ error: 'Tenant listing failed' });
+  }
+});
+
 router.post('/tenants', async (req, res) => {
   const parsed = TenantProvisionSchema.safeParse(req.body);
   if (!parsed.success) return res.status(400).json({ error: 'Invalid tenant provisioning request' });

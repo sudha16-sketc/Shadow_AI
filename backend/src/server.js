@@ -46,7 +46,9 @@ export async function startServer() {
     TenantInvitation.createIndexes(),
     PlatformAuditLog.createIndexes(),
   ]);
-  logger.info('MongoDB connected');
+  // Log the connected database name (not credentials or host) so operators can
+  // confirm the API and the provisioning script target the same database.
+  logger.info(`MongoDB connected (database: ${mongoose.connection.name})`);
   httpServer.listen(PORT, () => logger.info(`Server running on :${PORT}`));
 }
 

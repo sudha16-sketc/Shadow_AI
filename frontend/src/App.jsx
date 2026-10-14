@@ -11,6 +11,9 @@ import SettingsPage from './pages/Settings';
 import AuditLogPage from './pages/AuditLog';
 import JustificationsPage from './pages/Justifications';
 import Hero from './pages/Hero';
+import PlatformLogin from './pages/PlatformLogin';
+import PlatformAdmin from './pages/PlatformAdmin';
+import AcceptInvitation from './pages/AcceptInvitation';
 
 const API_BASE = import.meta.env.VITE_API_URL ?? 'http://localhost:3001';
 
@@ -19,8 +22,14 @@ function PrivateRoute({ children }) {
   return token ? children : <Navigate to="/hero" replace />;
 }
 
+function PlatformPrivateRoute({ children }) {
+  const platformToken = useAuthStore(s => s.platformToken);
+  return platformToken ? children : <Navigate to="/platform/login" replace />;
+}
+
 export default function App() {
   const token = useAuthStore(s => s.token);
+  const platformToken = useAuthStore(s => s.platformToken);
 
   useEffect(() => {
     if (!token) return undefined;
@@ -48,11 +57,30 @@ export default function App() {
       socket?.close();
     };
   }, [token]);
+
+  useEffect(() => {
+    if (!platformToken) return undefined;
+    // Platform tokens are short-lived (15m); return to login on expiry.
+    const timer = setTimeout(() => {
+      useAuthStore.getState().platformLogout();
+      window.location.assign('/platform/login');
+    }, 15 * 60 * 1000);
+    return () => clearTimeout(timer);
+  }, [platformToken]);
+
   return (
     <BrowserRouter>
       <Routes>
         <Route path="/hero" element={<Hero />} />
         <Route path="/signup" element={<Signup />} />
+        <Route path="/login" element={<Signup initialLogin />} />
+        <Route path="/accept-invitation" element={<AcceptInvitation />} />
+        <Route path="/platform/login" element={<PlatformLogin />} />
+        <Route path="/platform" element={
+          <PlatformPrivateRoute>
+            <PlatformAdmin />
+          </PlatformPrivateRoute>
+        } />
         <Route path="/" element={
           <PrivateRoute>
             <Layout />
