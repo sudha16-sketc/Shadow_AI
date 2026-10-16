@@ -193,22 +193,6 @@ export default function Documentation() {
             </p>
           </footer>
         </main>
-
-        <aside className="docsToc" aria-label="On this page">
-          <p className="docsTocTitle">ON THIS PAGE</p>
-          <nav className="docsTocNav">
-            {visibleSections.map(section => (
-              <button
-                key={section.id}
-                type="button"
-                className={`docsTocLink ${activeId === section.id ? 'isActive' : ''}`}
-                onClick={() => goTo(section.id)}
-              >
-                {section.title}
-              </button>
-            ))}
-          </nav>
-        </aside>
       </div>
     </div>
   );

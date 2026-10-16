@@ -28,7 +28,6 @@ export default function Hero() {
 
         <nav className="heroNavLinks">
           <Link to="/docs" className="heroNavLink">DOCS</Link>
-          <a href="#extension" className="heroNavLink">EXTENSION</a>
           <a
             href="https://github.com/sudha16-sketc/Shadow_AI"
             target="_blank"

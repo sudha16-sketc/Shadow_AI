@@ -10,7 +10,7 @@ const TOTAL_FRAMES = 192;
 const getFrameUrl = (index) => {
   const frameNum = String(index + 1).padStart(3, '0');
   const base = (import.meta.env.BASE_URL || '/').replace(/\/$/, '');
-  return `${base}/Developer_pressing_Enter_key_20261016001411_frames/frame_${frameNum}.jpg`;
+  return `${base}/Developer_pressing_Enter_key_20261016001411_frames/frame_${frameNum}_compressed.jpg`;
 };
 
 const narrativeSections = [
