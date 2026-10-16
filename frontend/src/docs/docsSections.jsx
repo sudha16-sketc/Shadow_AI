@@ -253,7 +253,7 @@ export const docsSections = [
         <CodeBlock
           language="text"
           title="Masking in practice"
-          code={`Before:  aws_secret_access_key = "AKIAIOSFODNN7EXAMPLE"
+          code={`Before:  aws_secret_access_key = "<YOUR_ACCESS_KEY>"
 After:   aws_secret_access_key = [REDACTED:AWS Access Key]`}
         />
 
