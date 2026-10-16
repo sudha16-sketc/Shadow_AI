@@ -21,10 +21,13 @@ import { authMiddleware } from './middleware/auth.js';
 import { recordServerError } from './services/metrics.js';
 
 const DEFAULT_ORIGINS = [
+  // Local development
   'http://localhost:5173',
   'http://127.0.0.1:5173',
   'http://localhost:4173',
   'http://127.0.0.1:4173',
+  // Deployed frontend (Vercel)
+  'https://shadow-ai-six-khaki.vercel.app',
 ];
 
 const EXTENSION_ORIGIN_RE = /^chrome-extension:\/\/[a-p]{32}$/;
@@ -37,7 +40,7 @@ export function resolveAllowedOrigins(raw = process.env.CORS_ORIGINS) {
 
   const origins = configured.length > 0 ? configured : DEFAULT_ORIGINS;
   if (process.env.NODE_ENV === 'production' && configured.length === 0) {
-    logger.warn('CORS_ORIGINS is not set; falling back to localhost development origins only');
+    logger.warn('CORS_ORIGINS is not set; falling back to built-in development and deployed origins');
   }
   return new Set(origins);
 }
