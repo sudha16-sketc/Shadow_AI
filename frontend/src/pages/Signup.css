@@ -52,7 +52,7 @@
 
 .toggle-buttons button.active-btn,
 .toggle-buttons button:hover {
-  background: #facc15;
+  background: #ff0000 ;
   color: #111;
   border-color: transparent;
 }
@@ -84,11 +84,11 @@
 }
 
 .left-container input:focus {
-  border-color: #facc15;
+  border-color: #ff0000;
 }
 
 .left-container button[type="submit"] {
-  background: #facc15;
+  background: #ff0000;
   color: #050505;
   font-weight: 800;
   padding: 1rem 1.1rem;
@@ -142,7 +142,7 @@
   left: 1.5rem;
   padding: 0.85rem 1rem;
   border-radius: 999px;
-  background: #facc15;
+  background: #ff0000;
   color: #111;
   font-weight: 700;
   border: none;

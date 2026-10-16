@@ -50,10 +50,15 @@ const OrgSchema = new Schema({
   policyVersion:  { type: Number, default: 1 },
 }, { timestamps: true });
 
-// ─── Platform administrator ──────────────────────────────────────────────────
+// ─── Platform administrator / manager ────────────────────────────────────────
+// A single collection holds both platform identities. `role` distinguishes the
+// super administrator (full platform control) from a platform manager (read-
+// oriented monitoring + investigation). Authorization always resolves the role
+// from this server-side record, never from a client-supplied or stale JWT claim.
 const PlatformAdminSchema = new Schema({
   email: { type: String, required: true, unique: true, lowercase: true, trim: true },
   passwordHash: { type: String, required: true },
+  role: { type: String, enum: ['super_admin', 'manager'], default: 'super_admin', required: true, index: true },
   authVersion: { type: Number, default: 0 },
   isActive: { type: Boolean, default: true },
 }, { timestamps: true });
@@ -145,6 +150,12 @@ const EventSchema = new Schema({
   findingLabels:{ type: [String] },                  // e.g. ["AWS Access Key", "Email"]
   alerted:      { type: Boolean, default: false },   // was Slack/email sent?
   justificationId: { type: Schema.Types.ObjectId, ref: 'Justification' }, // if user justified
+  investigation: {
+    status: { type: String, enum: ['open', 'investigating', 'resolved', 'dismissed'], default: 'open' },
+    note: { type: String, maxlength: 1000, default: '' },
+    updatedBy: { type: String, default: null },   // platform identity id
+    updatedAt: { type: Date, default: null },
+  },
   timestamp:    { type: Date, default: Date.now, index: true, expires: 2592000 }, // 30d TTL
 }, { timestamps: false });
 
@@ -184,9 +195,25 @@ const AuditLogSchema = new Schema({
   timestamp:    { type: Date, default: Date.now, index: true, expires: 7776000 }, // 90d TTL
 }, { timestamps: false });
 
+// ─── Authentication telemetry ────────────────────────────────────────────────
+// Minimal end-to-end telemetry so the platform can surface authentication
+// failures and suspicious activity. The email is stored masked only; no
+// password, token, or full identifier is ever persisted here.
+const AuthEventSchema = new Schema({
+  outcome:      { type: String, enum: ['success', 'failure'], required: true, index: true },
+  scope:        { type: String, enum: ['tenant', 'platform'], required: true, index: true },
+  emailMasked:  { type: String, maxlength: 200 },
+  ip:           { type: String, maxlength: 100 },
+  reason:       { type: String, maxlength: 100 },
+  at:           { type: Date, default: Date.now, index: true, expires: 2592000 }, // 30d TTL
+}, { timestamps: false });
+
 // Compound index for common queries
 EventSchema.index({ severity: 1, timestamp: -1 });
 EventSchema.index({ userRef: 1, timestamp: -1 });
+EventSchema.index({ 'investigation.status': 1, timestamp: -1 });
+EventSchema.index({ orgId: 1, severity: 1, timestamp: -1 });
+EventSchema.index({ policyDecision: 1, timestamp: -1 });
 EventSchema.index(
   { orgId: 1, deviceId: 1, idempotencyKey: 1 },
   { unique: true, partialFilterExpression: { idempotencyKey: { $type: 'string' } } }
@@ -208,3 +235,4 @@ export const Event = model('Event', EventSchema);
 export const EventReplay = model('EventReplay', EventReplaySchema);
 export const Justification = model('Justification', JustificationSchema);
 export const AuditLog = model('AuditLog', AuditLogSchema);
+export const AuthEvent = model('AuthEvent', AuthEventSchema);

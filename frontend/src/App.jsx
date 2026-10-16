@@ -14,6 +14,8 @@ import Hero from './pages/Hero';
 import PlatformLogin from './pages/PlatformLogin';
 import PlatformAdmin from './pages/PlatformAdmin';
 import AcceptInvitation from './pages/AcceptInvitation';
+import Documentation from './pages/Documentation';
+import ExtensionInstall from './pages/ExtensionInstall';
 
 const API_BASE = import.meta.env.VITE_API_URL ?? 'http://localhost:3001';
 
@@ -75,6 +77,8 @@ export default function App() {
         <Route path="/signup" element={<Signup />} />
         <Route path="/login" element={<Signup initialLogin />} />
         <Route path="/accept-invitation" element={<AcceptInvitation />} />
+        <Route path="/docs" element={<Documentation />} />
+        <Route path="/extension" element={<ExtensionInstall />} />
         <Route path="/platform/login" element={<PlatformLogin />} />
         <Route path="/platform" element={
           <PlatformPrivateRoute>
