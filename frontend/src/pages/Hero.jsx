@@ -6,6 +6,7 @@ import {
 } from "react-icons/fa";
 
 import ScrollImageSequence from "../components/ScrollImageSequence";
+import Footer from "../components/Footer";
 import "./Hero.css";
 
 export default function Hero() {
@@ -20,7 +21,7 @@ export default function Hero() {
           <div className="heroNavLogoIcon">
             <FaShieldAlt />
           </div>
-          <div>
+          <div>         
             <div className="heroNavBrandText">SHADOW AI</div>
             <div className="heroNavBrandSub">THE GATEKEEPER</div>
           </div>
@@ -28,6 +29,7 @@ export default function Hero() {
 
         <nav className="heroNavLinks">
           <Link to="/docs" className="heroNavLink">DOCS</Link>
+          <Link to="/extension" className="heroNavLink">EXTENSION</Link>
           <a
             href="https://github.com/sudha16-sketc/Shadow_AI"
             target="_blank"
@@ -67,6 +69,7 @@ export default function Hero() {
         onOpenDownloadModal={() => setShowPopup(true)}
         onGetStarted={() => navigate("/signup")}
       />
+      <Footer />
     </div>
   );
 }
