@@ -158,9 +158,9 @@ export default function Documentation() {
             <span className="docsEyebrow">PRODUCT DOCUMENTATION</span>
             <h1>Shadow AI Auditor</h1>
             <p>
-              Tenant-scoped detection, audit, and policy enforcement for sensitive data sent to
-              public AI tools. This documentation is derived from the repository source and is
-              updated alongside the code.
+              Detect sensitive data in AI prompts and enforce your organization&apos;s policy before
+              content leaves the browser. This guide covers how Shadow AI works, what it detects, and
+              how it protects your data.
             </p>
             <div className="docsIntroTags">
               <span>Detection</span>
@@ -188,8 +188,8 @@ export default function Documentation() {
 
           <footer className="docsFooter">
             <p>
-              Derived from the Shadow AI Auditor source tree. Planned or unverified functionality is
-              labelled as such; no test counts or secrets are asserted here.
+              This guide describes the current capabilities of Shadow AI Auditor. Coverage and
+              features evolve with each release.
             </p>
           </footer>
         </main>
