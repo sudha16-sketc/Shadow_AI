@@ -1,129 +1,73 @@
-import HeroModel from "../components/HeroModel";
+import React, { useState } from "react";
+import { Link, useNavigate } from "react-router-dom";
 import {
-  FaGithub,
-  FaLinkedin,
-  FaTwitter,
-  FaDownload,
-  FaTimes,
+  FaShieldAlt,
+  FaExternalLinkAlt,
 } from "react-icons/fa";
 
+import ScrollImageSequence from "../components/ScrollImageSequence";
 import "./Hero.css";
-import { useNavigate } from "react-router-dom";
-import { useState } from "react";
 
 export default function Hero() {
   const navigate = useNavigate();
-
-  const [showPopup, setShowPopup] = useState(false);
+  const [, setShowPopup] = useState(false);
 
   return (
-    <div className="heroContainer">
-      <div className="navBar">
-        <button
-          className="ctaBtn"
-          onClick={() => navigate("/signup")}
-        >
-          GET STARTED
-        </button>
-      </div>
-
-      {/* 3D Scene */}
-      <HeroModel />
-
-      {/* UI Content Layer */}
-      <div className="heroContent">
-        <h1 className="heroTitle">SHADOW</h1>
-        <h2 className="heroTitle2">The Gatekeeper</h2>
-
-        {/* Download Button */}
-        <button
-          className="downloadBtn"
-          onClick={() => setShowPopup(true)}
-        >
-          <FaDownload />
-          Download ZIP
-        </button>
-      </div>
-
-      <div className="heroLowerContent">
-        <p>
-          Shadow-AI Auditor monitors AI tool usage in real time,
-          detecting sensitive data exposure from clipboard and inputs.
-          It helps organizations prevent code, API keys, and
-          confidential data leaks while enabling safe, compliant AI
-          adoption.
-        </p>
-      </div>
-
-      <div className="heroSocials">
-        <a
-          href="https://github.com/sudha16-sketc"
-          target="_blank"
-          rel="noreferrer"
-        >
-          <FaGithub />
-          github
-        </a>
-
-        <a
-          href="https://www.linkedin.com/in/sudhakar-sutar-801354321/"
-          target="_blank"
-          rel="noreferrer"
-        >
-          <FaLinkedin />
-          linkedin
-        </a>
-
-        <a
-          href="https://twitter.com"
-          target="_blank"
-          rel="noreferrer"
-        >
-          <FaTwitter />
-          twitter
-        </a>
-      </div>
-
-
-
-      {/* POPUP */}
-      {showPopup && (
-        <div className="popupOverlay">
-          <div className="popupBox">
-            <button
-              className="closeBtn"
-              onClick={() => setShowPopup(false)}
-            >
-              <FaTimes />
-            </button>
-
-            <h2>Install SHADOW Extension</h2>
-
-            <img src="/steps.png" alt="How to install the Shadow AI extension" />
-
-            <ol className="popupSteps">
-              <li>
-                Build it from source:
-                <code>cd shadow-extension && npm ci && npm run build:development</code>
-              </li>
-              <li>
-                Open <code>chrome://extensions</code>, enable Developer mode, choose
-                <em> Load unpacked</em> and select <code>shadow-extension/dist</code>.
-              </li>
-              <li>Pair the extension with the one-time code from Dashboard → Settings.</li>
-            </ol>
-
-            <a
-              href="https://github.com/sudha16-sketc/Shadow_AI"
-              target="_blank"
-              rel="noreferrer"
-              className="popupDownloadBtn"
-            >
-              View source &amp; build instructions
-            </a>
+    <div className="heroPageWrapper">
+      {/* Top Fixed Navigation Bar */}
+      <header className="heroNav">
+        <a href="#top" className="heroNavBrand">
+          <div className="heroNavLogoIcon">
+            <FaShieldAlt />
           </div>
+          <div>
+            <div className="heroNavBrandText">SHADOW AI</div>
+            <div className="heroNavBrandSub">THE GATEKEEPER</div>
+          </div>
+        </a>
+
+        <nav className="heroNavLinks">
+          <Link to="/docs" className="heroNavLink">DOCS</Link>
+          <a href="#extension" className="heroNavLink">EXTENSION</a>
+          <a
+            href="https://github.com/sudha16-sketc/Shadow_AI"
+            target="_blank"
+            rel="noreferrer"
+            className="heroNavLink flex items-center gap-1.5"
+          >
+            GITHUB <FaExternalLinkAlt className="text-[10px]" />
+          </a>
+        </nav>
+
+        <div className="heroNavActions">
+          <button
+            type="button"
+            className="heroNavLoginBtn"
+            onClick={() => navigate("/login")}
+          >
+            SIGN IN
+          </button>
+          <button
+            type="button"
+            className="ctaBtn"
+            onClick={() => navigate("/signup")}
+          >
+            GET STARTED
+          </button>
         </div>
-      )}
+      </header>
+
+      {/* Anchor for top of page */}
+      <div id="interception" />
+
+      {/* 
+        Scroll-driven HTML Canvas Image Sequence
+        Pinned during scroll playback (192 frames) via GSAP ScrollTrigger
+      */}
+      <ScrollImageSequence
+        onOpenDownloadModal={() => setShowPopup(true)}
+        onGetStarted={() => navigate("/signup")}
+      />
     </div>
   );
 }

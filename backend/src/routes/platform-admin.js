@@ -4,9 +4,10 @@ import jwt from 'jsonwebtoken';
 import { z } from 'zod';
 import { JWT_SECRET } from '../config/security.js';
 import { Org, PlatformAdmin, PlatformAuditLog, TenantInvitation, User } from '../models/index.js';
-import { platformAdminAuthMiddleware } from '../middleware/auth.js';
+import { platformAdminAuthMiddleware, requirePlatformRole } from '../middleware/auth.js';
 import { createEnrollmentCode, hashDeviceCredential } from '../utils/device-credentials.js';
 import { revokeWebSocketTenant } from '../services/websocket.js';
+import { recordAuthEvent } from '../utils/telemetry.js';
 
 const router = Router();
 const PLATFORM_TOKEN_TTL = '15m';
@@ -36,16 +37,23 @@ router.post('/auth/login', async (req, res) => {
     const admin = await PlatformAdmin.findOne({ email, isActive: true });
     const isMatch = await bcrypt.compare(credentials.data.password, admin?.passwordHash || DUMMY_PASSWORD_HASH);
     if (!admin || !isMatch) {
+      recordAuthEvent({ outcome: 'failure', scope: 'platform', email, ip: req.ip, reason: 'invalid_credentials' });
       return res.status(401).json({ error: 'Invalid platform administrator credentials' });
     }
 
+    const role = admin.role ?? 'super_admin';
     const token = jwt.sign({
       tokenType: 'platform_admin',
       platformAdminId: admin._id,
+      role,
       authVersion: admin.authVersion ?? 0,
     }, JWT_SECRET, { expiresIn: PLATFORM_TOKEN_TTL, algorithm: 'HS256' });
 
-    return res.json({ token, platformAdmin: { id: admin._id, email: admin.email } });
+    recordAuthEvent({ outcome: 'success', scope: 'platform', email, ip: req.ip });
+    return res.json({
+      token,
+      platformAdmin: { id: admin._id, email: admin.email, role },
+    });
   } catch {
     return res.status(500).json({ error: 'Platform administrator login failed' });
   }
@@ -165,7 +173,7 @@ router.get('/tenants', async (req, res) => {
   }
 });
 
-router.post('/tenants', async (req, res) => {
+router.post('/tenants', requirePlatformRole('super_admin'), async (req, res) => {
   const parsed = TenantProvisionSchema.safeParse(req.body);
   if (!parsed.success) return res.status(400).json({ error: 'Invalid tenant provisioning request' });
 
@@ -233,7 +241,7 @@ router.post('/tenants', async (req, res) => {
   }
 });
 
-router.post('/tenants/:tenantId/invitations', async (req, res) => {
+router.post('/tenants/:tenantId/invitations', requirePlatformRole('super_admin'), async (req, res) => {
   const parsed = TenantAdminInviteSchema.safeParse(req.body);
   if (!parsed.success) return res.status(400).json({ error: 'Invalid tenant administrator invitation' });
 
@@ -287,7 +295,7 @@ router.post('/tenants/:tenantId/invitations', async (req, res) => {
   }
 });
 
-router.patch('/tenants/:tenantId/status', async (req, res) => {
+router.patch('/tenants/:tenantId/status', requirePlatformRole('super_admin'), async (req, res) => {
   const parsed = TenantStatusSchema.safeParse(req.body);
   if (!parsed.success) return res.status(400).json({ error: 'Invalid tenant lifecycle transition' });
 

@@ -13,9 +13,12 @@ import settingsRoutes from './routes/settings.js';
 import justificationsRoutes from './routes/justifications.js';
 import auditLogRoutes from './routes/audit-log.js';
 import platformAdminRoutes from './routes/platform-admin.js';
+import platformMonitoringRoutes from './routes/platform-monitoring.js';
+import platformManagersRoutes from './routes/platform-managers.js';
 import policiesRoutes from './routes/policies.js';
 import gatewayRoutes from './routes/gateway.js';
 import { authMiddleware } from './middleware/auth.js';
+import { recordServerError } from './services/metrics.js';
 
 const DEFAULT_ORIGINS = [
   'http://localhost:5173',
@@ -135,6 +138,8 @@ export function createApp() {
     skip: skipInTests,
   }));
 
+  app.use('/api/platform-admin/monitoring', platformMonitoringRoutes);
+  app.use('/api/platform-admin/managers', platformManagersRoutes);
   app.use('/api/platform-admin', platformAdminRoutes);
   app.use('/api/auth', authRoutes);
   app.use('/api/events', eventsRoutes);
@@ -177,6 +182,12 @@ export function createApp() {
     }
 
     logger.error(`Unhandled error on ${req.method} ${req.originalUrl} rid=${req.id} user=${user} org=${org} err=server_error`, err);
+    recordServerError({
+      method: req.method,
+      path: req.originalUrl,
+      status: status ?? 500,
+      category: 'server_error',
+    });
     res.status(status ?? 500).json({ error: 'Internal error', requestId: req.id });
   });
 

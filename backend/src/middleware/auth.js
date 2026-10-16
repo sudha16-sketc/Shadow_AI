@@ -125,9 +125,29 @@ export async function platformAdminAuthMiddleware(req, res, next) {
       return res.status(401).json({ error: 'Invalid or revoked platform credential' });
     }
 
-    req.platformAdmin = { id: String(admin._id), email: admin.email };
+    // Role is resolved from the server-side record on every request so a
+    // downgraded or revoked role cannot be preserved by a previously issued
+    // token claim.
+    req.platformAdmin = {
+      id: String(admin._id),
+      email: admin.email,
+      role: admin.role ?? 'super_admin',
+    };
     return next();
   } catch {
     return res.status(401).json({ error: 'Invalid or expired platform credential' });
   }
+}
+
+/**
+ * Restrict a platform route to one or more platform roles.
+ * Must run after platformAdminAuthMiddleware.
+ */
+export function requirePlatformRole(...roles) {
+  return (req, res, next) => {
+    if (!req.platformAdmin || !roles.includes(req.platformAdmin.role)) {
+      return res.status(403).json({ error: 'Insufficient platform privileges' });
+    }
+    return next();
+  };
 }

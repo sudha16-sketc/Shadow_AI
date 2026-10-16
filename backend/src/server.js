@@ -6,7 +6,7 @@ import 'dotenv/config';
 import mongoose from 'mongoose';
 import { createServer } from 'http';
 import { fileURLToPath } from 'node:url';
-import { Device, Event, EventReplay, Org, PlatformAdmin, PlatformAuditLog, TenantInvitation } from './models/index.js';
+import { Device, Event, EventReplay, Org, PlatformAdmin, PlatformAuditLog, TenantInvitation, AuthEvent } from './models/index.js';
 import app from './app.js';
 import { attachTenantWebSockets, broadcastTenantAlert } from './services/websocket.js';
 import logger from './utils/logger.js';
@@ -45,6 +45,7 @@ export async function startServer() {
     PlatformAdmin.createIndexes(),
     TenantInvitation.createIndexes(),
     PlatformAuditLog.createIndexes(),
+    AuthEvent.createIndexes(),
   ]);
   // Log the connected database name (not credentials or host) so operators can
   // confirm the API and the provisioning script target the same database.

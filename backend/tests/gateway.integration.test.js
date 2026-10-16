@@ -27,6 +27,7 @@ const state = {
   invitations: [],
   platformAudits: [],
   justifications: [],
+  authEvents: [],
 };
 
 function matches(record, filter = {}) {
@@ -116,6 +117,7 @@ const PlatformAdmin = model(state.platformAdmins, 'PlatformAdmin');
 const TenantInvitation = model(state.invitations, 'TenantInvitation');
 const PlatformAuditLog = model(state.platformAudits, 'PlatformAuditLog');
 const Justification = model(state.justifications, 'Justification');
+const AuthEvent = model(state.authEvents, 'AuthEvent');
 const Policy = {
   find: jest.fn().mockReturnValue({
     sort: jest.fn().mockReturnValue({
@@ -127,7 +129,7 @@ const Policy = {
 // ─── Mock Models (must be done before any `import` of app code) ─────────────
 jest.unstable_mockModule('../src/models/index.js', () => ({
   User, Org, Device, Event, EventReplay, Justification,
-  AuditLog, PlatformAdmin, TenantInvitation, PlatformAuditLog,
+  AuditLog, PlatformAdmin, TenantInvitation, PlatformAuditLog, AuthEvent,
   Team: {}, Policy
 }));
 

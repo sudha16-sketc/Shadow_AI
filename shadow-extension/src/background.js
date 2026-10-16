@@ -53,7 +53,7 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
     if (!AI_DOMAINS.includes(hostname)) return;
 
     const { domain, eventType, riskScore, severity, maskedPreview, findingLabels } = msg.payload;
-    if (domain !== hostname || !['paste', 'typing', 'modal_cancel', 'modal_proceed'].includes(eventType)) return;
+    if (domain !== hostname || !['paste', 'typing', 'modal_cancel', 'modal_proceed', 'modal_mask'].includes(eventType)) return;
     if (!Number.isFinite(riskScore) || !['LOW', 'MEDIUM', 'HIGH'].includes(severity)) return;
     eventQueue.push({
       idempotencyKey: crypto.randomUUID(),

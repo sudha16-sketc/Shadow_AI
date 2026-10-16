@@ -35,6 +35,7 @@ export const state = {
   platformAudits: [],
   justifications: [],
   policies: [],
+  authEvents: [],
 };
 
 export function resetState() {
@@ -147,6 +148,7 @@ export const PlatformAdmin = model(state.platformAdmins, 'PlatformAdmin');
 export const TenantInvitation = model(state.invitations, 'TenantInvitation');
 export const PlatformAuditLog = model(state.platformAudits, 'PlatformAuditLog');
 export const Justification = model(state.justifications, 'Justification');
+export const AuthEvent = model(state.authEvents, 'AuthEvent');
 
 // Policies are seeded directly by tests; the query shape is intentionally loose.
 export const Policy = {
@@ -162,7 +164,7 @@ const srcUrl = (relativePath) => fileURLToPath(new URL(relativePath, import.meta
 
 jest.unstable_mockModule(srcUrl('../../src/models/index.js'), () => ({
   User, Org, Device, Event, EventReplay, Justification,
-  AuditLog, PlatformAdmin, TenantInvitation, PlatformAuditLog,
+  AuditLog, PlatformAdmin, TenantInvitation, PlatformAuditLog, AuthEvent,
   Team: {}, Policy,
 }));
 
@@ -277,4 +279,46 @@ export function seedUser(org, overrides = {}) {
   };
   state.users.push(user);
   return user;
+}
+
+export function platformToken(admin) {
+  return jwt.sign({
+    tokenType: 'platform_admin',
+    platformAdminId: admin._id,
+    role: admin.role ?? 'super_admin',
+    authVersion: admin.authVersion ?? 0,
+  }, TEST_SECRET, { algorithm: 'HS256', expiresIn: '15m' });
+}
+
+export function seedPlatformAdmin(overrides = {}) {
+  const admin = {
+    _id: `platformadmin-${randomUUID()}`,
+    email: `platform-${randomUUID().slice(0, 8)}@example.test`,
+    passwordHash: 'not-checked-by-token-helper',
+    role: 'super_admin',
+    isActive: true,
+    authVersion: 0,
+    ...overrides,
+  };
+  state.platformAdmins.push(admin);
+  return admin;
+}
+
+export function seedEvent(org, overrides = {}) {
+  const event = {
+    _id: `event-${randomUUID()}`,
+    orgId: org._id,
+    domain: 'chat.openai.com',
+    eventType: 'PROMPT',
+    severity: 'LOW',
+    riskScore: 5,
+    policyDecision: 'ALLOW',
+    enforcementStatus: 'NOT_ATTEMPTED',
+    findingLabels: [],
+    timestamp: new Date(),
+    investigation: { status: 'open', note: '', updatedBy: null, updatedAt: null },
+    ...overrides,
+  };
+  state.events.push(event);
+  return event;
 }

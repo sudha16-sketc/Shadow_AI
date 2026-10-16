@@ -11,6 +11,7 @@ import { Device, Org, User } from "../models/index.js";
 import { authMiddleware, requireRole, requireUserAuth } from "../middleware/auth.js";
 import { issueWebSocketTicket, revokeWebSocketUser } from '../services/websocket.js';
 import { createDeviceCredential, createDeviceId, createEnrollmentCode, hashDeviceCredential } from '../utils/device-credentials.js';
+import { recordAuthEvent } from '../utils/telemetry.js';
 
 const router = Router();
 const TOKEN_TTL = "7d";
@@ -41,13 +42,17 @@ router.post("/login", async (req, res) => {
     const isMatch = await bcrypt.compare(password, user?.passwordHash || DUMMY_PASSWORD_HASH);
 
     if (!user || !user.passwordHash || !user.isActive || !user.orgId || !isMatch) {
+      recordAuthEvent({ outcome: 'failure', scope: 'tenant', email, ip: req.ip, reason: 'invalid_credentials' });
       return res.status(401).json({
         error: "Invalid credentials",
       });
     }
 
     const org = await Org.findOne({ _id: user.orgId, lifecycleStatus: 'active' });
-    if (!org) return res.status(401).json({ error: 'Invalid credentials' });
+    if (!org) {
+      recordAuthEvent({ outcome: 'failure', scope: 'tenant', email, ip: req.ip, reason: 'tenant_inactive' });
+      return res.status(401).json({ error: 'Invalid credentials' });
+    }
 
     const token = jwt.sign(
       {
@@ -73,6 +78,7 @@ router.post("/login", async (req, res) => {
         role: user.role,
       },
     });
+    recordAuthEvent({ outcome: 'success', scope: 'tenant', email, ip: req.ip });
   } catch (err) {
     res.status(500).json({
       error: 'Login failed',
