@@ -38,11 +38,16 @@ export function resolveAllowedOrigins(raw = process.env.CORS_ORIGINS) {
     .map(value => value.trim().replace(/\/$/, ''))
     .filter(Boolean);
 
-  const origins = configured.length > 0 ? configured : DEFAULT_ORIGINS;
+  // Always allow the built-in origins (local development and the hosted
+  // frontend) and layer any explicitly configured origins on top. Previously a
+  // configured CORS_ORIGINS fully replaced the built-in list, which silently
+  // dropped the hosted origin when the env var only listed localhost and made
+  // browsers block production requests (no Access-Control-Allow-Origin).
+  const origins = new Set([...DEFAULT_ORIGINS, ...configured]);
   if (process.env.NODE_ENV === 'production' && configured.length === 0) {
-    logger.warn('CORS_ORIGINS is not set; falling back to built-in development and deployed origins');
+    logger.warn('CORS_ORIGINS is not set; allowing built-in development and deployed origins');
   }
-  return new Set(origins);
+  return origins;
 }
 
 function isOriginAllowed(origin, allowedOrigins) {
