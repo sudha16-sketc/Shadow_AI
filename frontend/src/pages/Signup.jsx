@@ -177,7 +177,7 @@ const Signup = ({ initialLogin = false }) => {
         onClick={() => window.history.back()}
         type="button"
       >
-        ⬅ BACK
+        BACK
       </button>
     </div>
   );
