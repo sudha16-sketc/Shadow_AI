@@ -2,8 +2,7 @@ import React, { useState } from "react";
 import "./Signup.css";
 import { useNavigate } from "react-router-dom";
 import { useAuthStore } from "../hooks/useAuth";
-
-const API = import.meta.env.VITE_API_URL ?? "http://localhost:3001";
+import { API_BASE as API } from "../config";
 
 const Signup = ({ initialLogin = false }) => {
   const [username, setUsername] = useState("");

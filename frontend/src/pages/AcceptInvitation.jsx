@@ -1,7 +1,6 @@
 import { useState } from 'react';
 import { Link, useSearchParams } from 'react-router-dom';
-
-const API = import.meta.env.VITE_API_URL ?? 'http://localhost:3001';
+import { API_BASE as API } from '../config';
 
 export default function AcceptInvitation() {
   const [params] = useSearchParams();

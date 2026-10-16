@@ -16,8 +16,7 @@ import PlatformAdmin from './pages/PlatformAdmin';
 import AcceptInvitation from './pages/AcceptInvitation';
 import Documentation from './pages/Documentation';
 import ExtensionInstall from './pages/ExtensionInstall';
-
-const API_BASE = import.meta.env.VITE_API_URL ?? 'http://localhost:3001';
+import { API_BASE } from './config';
 
 function PrivateRoute({ children }) {
   const token = useAuthStore(s => s.token);

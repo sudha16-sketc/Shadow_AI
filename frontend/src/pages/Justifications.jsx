@@ -1,5 +1,6 @@
 import React, { useEffect, useState } from 'react';
 import { useAuthStore } from '../hooks/useAuth';
+import { API_BASE as API } from '../config';
 
 const Justifications = () => {
   const [justifications, setJustifications] = useState([]);
@@ -29,9 +30,6 @@ const Justifications = () => {
   useEffect(() => {
     loadJustifications();
   }, [filter, page]);
-  const API = import.meta.env.VITE_API_URL ?? 'http://localhost:3001';
-
-
 
   const handleApprove = async (id, approved, reason) => {
     try {

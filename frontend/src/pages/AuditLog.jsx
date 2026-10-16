@@ -1,5 +1,6 @@
 import React, { useEffect, useState } from 'react';
 import { useAuthStore } from '../hooks/useAuth';
+import { API_BASE as API } from '../config';
 
 const AuditLog = () => {
   const [logs, setLogs] = useState([]);
@@ -28,9 +29,6 @@ const AuditLog = () => {
   useEffect(() => {
     loadLogs();
   }, [page, actionFilter]);
-  const API = import.meta.env.VITE_API_URL ?? 'http://localhost:3001';
-
-
 
   const downloadExport = async (format) => {
     try {

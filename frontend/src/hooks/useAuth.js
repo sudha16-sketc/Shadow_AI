@@ -1,8 +1,7 @@
 import { create } from 'zustand';
 import { persist } from 'zustand/middleware';
 import { useCallback } from 'react';
-
-const API = import.meta.env.VITE_API_URL ?? 'http://localhost:3001';
+import { API_BASE as API } from '../config';
 
 export const useAuthStore = create(
   persist(
