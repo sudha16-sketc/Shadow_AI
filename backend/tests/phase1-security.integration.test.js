@@ -139,7 +139,7 @@ const Policy = {
 };
 
 jest.unstable_mockModule('../src/models/index.js', () => ({
-  User, Org, Device, Event, EventReplay, Justification, AuditLog, PlatformAdmin, TenantInvitation, PlatformAuditLog, AuthEvent, Team: {}, Policy
+  User, Org, Device, Event, EventReplay, Justification, AuditLog, PlatformAdmin, TenantInvitation, PlatformAuditLog, AuthEvent, AccessRequest: {}, Team: {}, Policy
 }));
 
 const { createApp } = await import('../src/app.js');

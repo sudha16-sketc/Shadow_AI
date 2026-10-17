@@ -64,8 +64,12 @@ export default function PlatformAdmin() {
   const [error, setError] = useState('');
   const [notice, setNotice] = useState(null);
   const [busy, setBusy] = useState(false);
-  const [form, setForm] = useState({ name: '', adminName: '', adminEmail: '' });
+  const [form, setForm] = useState({ name: '', adminName: '', adminEmail: '', adminPassword: '' });
   const [mgrForm, setMgrForm] = useState({ email: '', password: '' });
+  const [accessRequests, setAccessRequests] = useState([]);
+  const [reviewTarget, setReviewTarget] = useState(null);
+  const [reviewPassword, setReviewPassword] = useState('');
+  const [reviewError, setReviewError] = useState('');
 
   const loadTenants = useCallback(async () => {
     const [list, metrics] = await Promise.all([
@@ -94,16 +98,22 @@ export default function PlatformAdmin() {
     setManagers(data.managers ?? []);
   }, [platformFetch, isSuperAdmin]);
 
+  const loadAccessRequests = useCallback(async () => {
+    if (!isSuperAdmin) return;
+    const data = await platformFetch('/api/platform-admin/access-requests?status=pending');
+    setAccessRequests(data.requests ?? []);
+  }, [platformFetch, isSuperAdmin]);
+
   const loadAll = useCallback(async () => {
     setLoading(true);
     setError('');
     const results = await Promise.allSettled([
-      loadTenants(), loadOverview(), loadEvents(), loadManagers(),
+      loadTenants(), loadOverview(), loadEvents(), loadManagers(), loadAccessRequests(),
     ]);
     const failure = results.find((r) => r.status === 'rejected');
     if (failure) setError(failure.reason?.message || 'Failed to load platform data');
     setLoading(false);
-  }, [loadTenants, loadOverview, loadEvents, loadManagers]);
+  }, [loadTenants, loadOverview, loadEvents, loadManagers, loadAccessRequests]);
 
   useEffect(() => {
     loadAll();
@@ -120,15 +130,57 @@ export default function PlatformAdmin() {
     setNotice(null);
     setBusy(true);
     try {
+      const body = { name: form.name, adminName: form.adminName, adminEmail: form.adminEmail };
+      if (form.adminPassword) body.adminPassword = form.adminPassword;
       const data = await platformFetch('/api/platform-admin/tenants', {
         method: 'POST',
-        body: JSON.stringify(form),
+        body: JSON.stringify(body),
       });
-      setNotice({ kind: 'invite', email: data.invitation.email, token: data.invitation.token });
-      setForm({ name: '', adminName: '', adminEmail: '' });
+      if (data.provisioned) {
+        setNotice({ kind: 'provisioned', email: data.provisioned.email });
+      } else if (data.invitation) {
+        setNotice({ kind: 'invite', email: data.invitation.email, token: data.invitation.token });
+      }
+      setForm({ name: '', adminName: '', adminEmail: '', adminPassword: '' });
       await loadTenants();
     } catch (err) {
       setError(err.message || 'Tenant provisioning failed');
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function handleReviewApprove() {
+    if (!reviewTarget) return;
+    setReviewError('');
+    setBusy(true);
+    try {
+      const body = reviewPassword ? { password: reviewPassword } : {};
+      await platformFetch(`/api/platform-admin/access-requests/${reviewTarget.id}/approve`, {
+        method: 'POST',
+        body: JSON.stringify(body),
+      });
+      setReviewTarget(null);
+      setReviewPassword('');
+      await Promise.all([loadAccessRequests(), loadTenants()]);
+    } catch (err) {
+      setReviewError(err.message || 'Access request approval failed');
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function handleReviewReject(request) {
+    setError('');
+    setBusy(true);
+    try {
+      await platformFetch(`/api/platform-admin/access-requests/${request.id}/reject`, {
+        method: 'POST',
+        body: JSON.stringify({}),
+      });
+      await loadAccessRequests();
+    } catch (err) {
+      setError(err.message || 'Access request rejection failed');
     } finally {
       setBusy(false);
     }
@@ -244,7 +296,14 @@ export default function PlatformAdmin() {
           </div>
         )}
 
-        {notice && (
+        {notice && notice.kind === 'provisioned' && (
+          <div className="rounded-lg border border-emerald-500/30 bg-emerald-500/10 px-4 py-3 text-xs text-emerald-200">
+            Tenant provisioned and activated. <span className="font-semibold">{notice.email}</span> can
+            sign in to the tenant app with the password you set.
+          </div>
+        )}
+
+        {notice && notice.kind === 'invite' && (
           <div className="rounded-lg border border-emerald-500/30 bg-emerald-500/10 px-4 py-3 text-xs text-emerald-200 space-y-2">
             <p>
               Invitation ready for <span className="font-semibold">{notice.email}</span>. It expires in
@@ -365,9 +424,10 @@ export default function PlatformAdmin() {
           <section className="rounded-xl border border-white/[0.07] p-5">
             <h2 className="text-sm font-semibold text-white mb-1">Provision a tenant</h2>
             <p className="text-xs text-gray-500 mb-4">
-              Creates the tenant and a single-use onboarding invitation for its first administrator.
+              Creates the tenant. Set a password to activate the administrator immediately, or leave it
+              blank to issue a single-use onboarding invitation instead.
             </p>
-            <form onSubmit={handleCreate} className="grid gap-3 sm:grid-cols-3">
+            <form onSubmit={handleCreate} className="grid gap-3 sm:grid-cols-2">
               <input
                 required
                 placeholder="Tenant name"
@@ -390,14 +450,67 @@ export default function PlatformAdmin() {
                 onChange={(e) => setForm({ ...form, adminEmail: e.target.value })}
                 className="rounded-lg bg-white/[0.04] border border-white/[0.08] px-3 py-2 text-sm"
               />
+              <input
+                type="password"
+                minLength={12}
+                placeholder="Admin password (optional, 12+)"
+                value={form.adminPassword}
+                onChange={(e) => setForm({ ...form, adminPassword: e.target.value })}
+                className="rounded-lg bg-white/[0.04] border border-white/[0.08] px-3 py-2 text-sm"
+              />
               <button
                 type="submit"
                 disabled={busy}
-                className="sm:col-span-3 rounded-lg bg-red-500 hover:bg-red-600 disabled:opacity-50 text-white text-sm font-medium py-2 transition-colors"
+                className="sm:col-span-2 rounded-lg bg-red-500 hover:bg-red-600 disabled:opacity-50 text-white text-sm font-medium py-2 transition-colors"
               >
-                {busy ? 'Working…' : 'Create tenant & invite admin'}
+                {busy ? 'Working…' : form.adminPassword ? 'Create tenant & activate admin' : 'Create tenant & invite admin'}
               </button>
             </form>
+          </section>
+        )}
+
+        {isSuperAdmin && (
+          <section className="rounded-xl border border-white/[0.07]">
+            <div className="px-5 py-4 border-b border-white/[0.07]">
+              <h2 className="text-sm font-semibold text-white">Tenant access requests</h2>
+              <p className="text-xs text-gray-500 mt-1">
+                Provisioned administrators asking to be activated.
+              </p>
+            </div>
+            {accessRequests.length === 0 ? (
+              <p className="px-5 py-6 text-xs text-gray-500">No pending access requests.</p>
+            ) : (
+              <ul className="divide-y divide-white/[0.04]">
+                {accessRequests.map((request) => (
+                  <li key={request.id} className="px-5 py-3 flex items-center justify-between gap-4">
+                    <div className="min-w-0">
+                      <p className="text-xs text-gray-200 truncate">{request.email}</p>
+                      <p className="text-[10px] text-gray-500 truncate">
+                        {request.tenantName ?? 'Unknown tenant'} · requested{' '}
+                        {request.requestedAt ? new Date(request.requestedAt).toLocaleString() : '—'}
+                        {!request.hasPassword && ' · no credential set'}
+                      </p>
+                    </div>
+                    <div className="flex items-center gap-3 shrink-0">
+                      <button
+                        disabled={busy}
+                        onClick={() => { setReviewError(''); setReviewPassword(''); setReviewTarget(request); }}
+                        className="text-xs text-emerald-300 hover:text-emerald-200 disabled:opacity-50"
+                      >
+                        Approve
+                      </button>
+                      <button
+                        disabled={busy}
+                        onClick={() => handleReviewReject(request)}
+                        className="text-xs text-red-300 hover:text-red-200 disabled:opacity-50"
+                      >
+                        Reject
+                      </button>
+                    </div>
+                  </li>
+                ))}
+              </ul>
+            )}
           </section>
         )}
 
@@ -543,6 +656,53 @@ export default function PlatformAdmin() {
           </section>
         )}
       </main>
+
+      {reviewTarget && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center">
+          <div className="absolute inset-0 bg-black/60 backdrop-blur-sm" onClick={() => setReviewTarget(null)} />
+          <div className="relative bg-gray-900 border border-white/10 rounded-2xl w-full max-w-sm p-6 shadow-2xl">
+            <h2 className="text-base font-semibold text-white mb-1">Approve access request</h2>
+            <p className="text-xs text-gray-500 mb-4">
+              Activate <span className="text-gray-300">{reviewTarget.email}</span> for{' '}
+              {reviewTarget.tenantName ?? 'this tenant'}.
+            </p>
+            {!reviewTarget.hasPassword && (
+              <div className="mb-3">
+                <label className="block text-xs text-gray-400 mb-1">Set a password</label>
+                <input
+                  type="password"
+                  minLength={12}
+                  value={reviewPassword}
+                  onChange={(e) => setReviewPassword(e.target.value)}
+                  placeholder="Minimum 12 characters"
+                  className="w-full rounded-lg bg-white/[0.04] border border-white/[0.08] px-3 py-2 text-sm"
+                />
+                <p className="mt-1 text-[10px] text-gray-500">This account has no credential yet.</p>
+              </div>
+            )}
+            {reviewError && (
+              <div className="mb-3 rounded-lg border border-red-500/30 bg-red-500/10 px-3 py-2 text-xs text-red-300">
+                {reviewError}
+              </div>
+            )}
+            <div className="flex gap-2 mt-2">
+              <button
+                onClick={() => setReviewTarget(null)}
+                className="flex-1 bg-white/[0.05] border border-white/10 text-gray-300 text-sm font-medium py-2.5 rounded-xl hover:bg-white/[0.09] transition-colors"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={handleReviewApprove}
+                disabled={busy || (!reviewTarget.hasPassword && reviewPassword.length < 12)}
+                className="flex-1 bg-emerald-600 text-white text-sm font-medium py-2.5 rounded-xl hover:bg-emerald-500 transition-colors disabled:opacity-50"
+              >
+                {busy ? 'Working…' : 'Approve'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

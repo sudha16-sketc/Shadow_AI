@@ -208,6 +208,33 @@ const AuthEventSchema = new Schema({
   at:           { type: Date, default: Date.now, index: true, expires: 2592000 }, // 30d TTL
 }, { timestamps: false });
 
+// ─── Access request ───────────────────────────────────────────────────────────
+// A provisioned-but-inactive identity asking to be activated. `scope` decides
+// who reviews it: tenant administrators (`tenant_admin`) are reviewed by the
+// platform, any other role (`developer`) is reviewed by the tenant's own
+// administrator. The reviewer and target tenant are always derived from the
+// referenced identity, never from the request body. `userId` is set when the
+// account record already exists (a developer, or a returning administrator);
+// a first-time tenant administrator is identified by their pending invitation
+// until approval creates the account.
+const AccessRequestSchema = new Schema({
+  scope:       { type: String, enum: ['tenant_admin', 'developer'], required: true, index: true },
+  orgId:       { type: Schema.Types.ObjectId, ref: 'Org', required: true, index: true },
+  userId:      { type: Schema.Types.ObjectId, ref: 'User', default: null, index: true },
+  email:       { type: String, required: true, lowercase: true, trim: true },
+  status:      { type: String, enum: ['pending', 'approved', 'rejected'], default: 'pending', required: true, index: true },
+  reviewedBy:  { type: String, default: null },
+  reviewedAt:  { type: Date, default: null },
+  reviewNote:  { type: String, maxlength: 500, default: '' },
+  requestedAt: { type: Date, default: Date.now },
+}, { timestamps: true });
+// At most one outstanding request per provisioned identity.
+AccessRequestSchema.index(
+  { scope: 1, orgId: 1, email: 1 },
+  { unique: true, partialFilterExpression: { status: 'pending' } }
+);
+AccessRequestSchema.index({ scope: 1, status: 1, orgId: 1, requestedAt: -1 });
+
 // Compound index for common queries
 EventSchema.index({ severity: 1, timestamp: -1 });
 EventSchema.index({ userRef: 1, timestamp: -1 });
@@ -236,3 +263,4 @@ export const EventReplay = model('EventReplay', EventReplaySchema);
 export const Justification = model('Justification', JustificationSchema);
 export const AuditLog = model('AuditLog', AuditLogSchema);
 export const AuthEvent = model('AuthEvent', AuthEventSchema);
+export const AccessRequest = model('AccessRequest', AccessRequestSchema);

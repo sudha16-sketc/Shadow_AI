@@ -3,7 +3,7 @@ import bcrypt from 'bcryptjs';
 import jwt from 'jsonwebtoken';
 import { z } from 'zod';
 import { JWT_SECRET } from '../config/security.js';
-import { Org, PlatformAdmin, PlatformAuditLog, TenantInvitation, User } from '../models/index.js';
+import { AccessRequest, Org, PlatformAdmin, PlatformAuditLog, TenantInvitation, User } from '../models/index.js';
 import { platformAdminAuthMiddleware, requirePlatformRole } from '../middleware/auth.js';
 import { createEnrollmentCode, hashDeviceCredential } from '../utils/device-credentials.js';
 import { revokeWebSocketTenant } from '../services/websocket.js';
@@ -17,6 +17,9 @@ const TenantProvisionSchema = z.object({
   name: z.string().trim().min(1).max(100),
   adminName: z.string().trim().min(1).max(100),
   adminEmail: z.string().trim().email().max(254),
+  // When supplied, the tenant and its first administrator are activated
+  // immediately and no invitation is issued.
+  adminPassword: z.string().min(12).max(128).optional(),
 }).strict();
 const InvitationAcceptSchema = z.object({
   token: z.string().min(32).max(128),
@@ -26,6 +29,11 @@ const TenantStatusSchema = z.object({ lifecycleStatus: z.enum(['active', 'suspen
 const TenantAdminInviteSchema = z.object({
   name: z.string().trim().min(1).max(100),
   email: z.string().trim().email().max(254),
+}).strict();
+const AccessReviewSchema = z.object({
+  // Only required when the target account has no credential yet.
+  password: z.string().min(12).max(128).optional(),
+  note: z.string().trim().max(500).optional(),
 }).strict();
 
 router.post('/auth/login', async (req, res) => {
@@ -133,6 +141,175 @@ router.post('/invitations/accept', async (req, res) => {
 
 router.use(platformAdminAuthMiddleware);
 
+// ─── Tenant administrator access requests ────────────────────────────────────
+// A provisioned-but-inactive tenant administrator may ask to be activated.
+// Super administrators review these. The tenant and target account are always
+// derived from the stored request, never from the caller.
+function serializeAccessRequest(request, { user, org } = {}) {
+  return {
+    id: request._id,
+    scope: request.scope,
+    status: request.status,
+    tenantId: request.orgId,
+    tenantName: org?.name ?? null,
+    email: request.email,
+    hasPassword: Boolean(user?.passwordHash),
+    requestedAt: request.requestedAt ?? null,
+    reviewedBy: request.reviewedBy ?? null,
+    reviewedAt: request.reviewedAt ?? null,
+    reviewNote: request.reviewNote ?? '',
+  };
+}
+
+router.get('/access-requests', async (req, res) => {
+  const { status } = req.query;
+  const filter = { scope: 'tenant_admin' };
+  if (['pending', 'approved', 'rejected'].includes(status)) filter.status = status;
+
+  try {
+    const requests = await AccessRequest.find(filter).sort({ requestedAt: -1 }).limit(200).lean();
+    const orgs = requests.length
+      ? await Org.find({ _id: { $in: requests.map(r => r.orgId) } }).lean()
+      : [];
+    const userIds = requests.filter(r => r.userId).map(r => r.userId);
+    const users = userIds.length
+      ? await User.find({ _id: { $in: userIds } }).lean()
+      : [];
+    const orgMap = new Map(orgs.map(o => [String(o._id), o]));
+    const userMap = new Map(users.map(u => [String(u._id), u]));
+
+    return res.json({
+      requests: requests.map(r => serializeAccessRequest(r, {
+        org: orgMap.get(String(r.orgId)),
+        user: r.userId ? userMap.get(String(r.userId)) : null,
+      })),
+    });
+  } catch {
+    return res.status(500).json({ error: 'Access request listing failed' });
+  }
+});
+
+router.post('/access-requests/:id/approve', requirePlatformRole('super_admin'), async (req, res) => {
+  const parsed = AccessReviewSchema.safeParse(req.body ?? {});
+  if (!parsed.success) return res.status(400).json({ error: 'Invalid access review' });
+
+  try {
+    const request = await AccessRequest.findOne({ _id: req.params.id, scope: 'tenant_admin' });
+    if (!request) return res.status(404).json({ error: 'Access request not found' });
+    if (request.status !== 'pending') return res.status(409).json({ error: 'Access request already reviewed' });
+
+    const existingUser = request.userId
+      ? await User.findOne({ _id: request.userId, orgId: request.orgId })
+      : null;
+    const invitation = await TenantInvitation.findOne({
+      orgId: request.orgId, email: request.email, status: 'pending',
+    });
+    if (!existingUser && !invitation) {
+      return res.status(409).json({ error: 'No provisioned account matches this request' });
+    }
+    // A password is required only when the account has no credential yet.
+    if (!existingUser?.passwordHash && !parsed.data.password) {
+      return res.status(400).json({ error: 'A password is required to activate this account' });
+    }
+
+    const now = new Date();
+    const claimed = await AccessRequest.findOneAndUpdate(
+      { _id: request._id, status: 'pending' },
+      { $set: { status: 'approved', reviewedBy: String(req.platformAdmin.id), reviewedAt: now, reviewNote: parsed.data.note ?? '' } },
+      { new: true }
+    );
+    if (!claimed) return res.status(409).json({ error: 'Access request already reviewed' });
+
+    const passwordHash = parsed.data.password ? await bcrypt.hash(parsed.data.password, 12) : undefined;
+    let user = existingUser;
+    if (user) {
+      const update = { $set: {} };
+      if (passwordHash) update.$set.passwordHash = passwordHash;
+      if (!user.isActive) update.$set.isActive = true;
+      if (Object.keys(update.$set).length > 0) {
+        update.$inc = { authVersion: 1 };
+        user = await User.findOneAndUpdate({ _id: user._id, orgId: request.orgId }, update, { new: true });
+      }
+    } else {
+      user = await User.create({
+        email: request.email,
+        passwordHash,
+        name: invitation.name,
+        orgId: request.orgId,
+        role: 'admin',
+        isActive: true,
+      });
+    }
+    if (!user) {
+      await AccessRequest.updateOne(
+        { _id: claimed._id },
+        { $set: { status: 'pending', reviewedBy: null, reviewedAt: null, reviewNote: '' } }
+      );
+      return res.status(409).json({ error: 'Account could not be activated' });
+    }
+
+    if (invitation) {
+      await TenantInvitation.updateOne(
+        { _id: invitation._id, status: 'pending' },
+        { $set: { status: 'accepted', usedAt: now } }
+      );
+    }
+    await Org.updateOne(
+      { _id: request.orgId, lifecycleStatus: 'pending_admin' },
+      { $set: { lifecycleStatus: 'active', activatedAt: now } }
+    );
+    await PlatformAuditLog.create({
+      actorAdminId: req.platformAdmin.id,
+      action: 'tenant_admin_access_approved',
+      tenantId: request.orgId,
+      targetId: String(user._id),
+      changes: { email: request.email, passwordProvisioned: Boolean(passwordHash) },
+      ip: req.ip,
+      userAgent: req.headers['user-agent'],
+    });
+
+    return res.json({
+      id: claimed._id,
+      status: 'approved',
+      tenantId: request.orgId,
+      email: request.email,
+    });
+  } catch {
+    return res.status(500).json({ error: 'Access request approval failed' });
+  }
+});
+
+router.post('/access-requests/:id/reject', requirePlatformRole('super_admin'), async (req, res) => {
+  const parsed = AccessReviewSchema.safeParse(req.body ?? {});
+  if (!parsed.success) return res.status(400).json({ error: 'Invalid access review' });
+
+  try {
+    const request = await AccessRequest.findOne({ _id: req.params.id, scope: 'tenant_admin' });
+    if (!request) return res.status(404).json({ error: 'Access request not found' });
+
+    const reviewed = await AccessRequest.findOneAndUpdate(
+      { _id: request._id, status: 'pending' },
+      { $set: { status: 'rejected', reviewedBy: String(req.platformAdmin.id), reviewedAt: new Date(), reviewNote: parsed.data.note ?? '' } },
+      { new: true }
+    );
+    if (!reviewed) return res.status(409).json({ error: 'Access request already reviewed' });
+
+    await PlatformAuditLog.create({
+      actorAdminId: req.platformAdmin.id,
+      action: 'tenant_admin_access_rejected',
+      tenantId: request.orgId,
+      targetId: request.email,
+      changes: { note: parsed.data.note ?? '' },
+      ip: req.ip,
+      userAgent: req.headers['user-agent'],
+    });
+
+    return res.json({ id: reviewed._id, status: 'rejected' });
+  } catch {
+    return res.status(500).json({ error: 'Access request rejection failed' });
+  }
+});
+
 // GET /api/platform-admin/tenants — list tenants for the platform console.
 // Returns lifecycle status and the email of any outstanding invitation. The
 // invitation token itself is only ever returned once, at creation/re-issue.
@@ -190,6 +367,51 @@ router.post('/tenants', requirePlatformRole('super_admin'), async (req, res) => 
       TenantInvitation.findOne({ email: adminEmail, status: 'pending', expiresAt: { $gt: now } }),
     ]);
     if (existingUser || existingPlatformAdmin || existingInvitation) return res.status(409).json({ error: 'Admin identity is already assigned or invited' });
+
+    if (parsed.data.adminPassword) {
+      // Direct provisioning: an administrator-set credential activates both the
+      // tenant and its first administrator immediately, with no invitation.
+      const passwordHash = await bcrypt.hash(parsed.data.adminPassword, 12);
+      const org = await Org.create({
+        name: parsed.data.name,
+        lifecycleStatus: 'active',
+        activatedAt: now,
+        securityScore: 100,
+        monitoredDomains: ['chat.openai.com', 'claude.ai', 'gemini.google.com'],
+        policyVersion: 1,
+        settings: { blockOnHigh: true, requireJustification: true, alertOnMedium: true, defaultAction: 'BLOCK' },
+      });
+      await User.create({
+        email: adminEmail,
+        passwordHash,
+        name: parsed.data.adminName,
+        orgId: org._id,
+        role: 'admin',
+        isActive: true,
+      });
+      await PlatformAuditLog.create({
+        actorAdminId: req.platformAdmin.id,
+        action: 'tenant_created',
+        tenantId: org._id,
+        targetId: String(org._id),
+        changes: { name: org.name, lifecycleStatus: 'active' },
+        ip: req.ip,
+        userAgent: req.headers['user-agent'],
+      });
+      await PlatformAuditLog.create({
+        actorAdminId: req.platformAdmin.id,
+        action: 'tenant_admin_provisioned',
+        tenantId: org._id,
+        targetId: adminEmail,
+        changes: { activatedAt: now },
+        ip: req.ip,
+        userAgent: req.headers['user-agent'],
+      });
+      return res.status(201).json({
+        tenant: { id: org._id, name: org.name, lifecycleStatus: 'active' },
+        provisioned: { email: adminEmail },
+      });
+    }
 
     const org = await Org.create({
       name: parsed.data.name,

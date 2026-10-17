@@ -14,6 +14,7 @@ import Hero from './pages/Hero';
 import PlatformLogin from './pages/PlatformLogin';
 import PlatformAdmin from './pages/PlatformAdmin';
 import AcceptInvitation from './pages/AcceptInvitation';
+import RequestAccess from './pages/RequestAccess';
 import Documentation from './pages/Documentation';
 import ExtensionInstall from './pages/ExtensionInstall';
 import { API_BASE } from './config';
@@ -76,6 +77,7 @@ export default function App() {
         <Route path="/signup" element={<Signup />} />
         <Route path="/login" element={<Signup initialLogin />} />
         <Route path="/accept-invitation" element={<AcceptInvitation />} />
+        <Route path="/request-access" element={<RequestAccess />} />
         <Route path="/docs" element={<Documentation />} />
         <Route path="/extension" element={<ExtensionInstall />} />
         <Route path="/platform/login" element={<PlatformLogin />} />
@@ -96,6 +98,8 @@ export default function App() {
           <Route path="users"     element={<UsersPage />} />
           <Route path="analytics" element={<AnalyticsPage />} />
           <Route path="settings"  element={<SettingsPage />} />
+          <Route path="audit-log" element={<AuditLogPage />} />
+          <Route path="justifications" element={<JustificationsPage />} />
         </Route>
       </Routes>
     </BrowserRouter>

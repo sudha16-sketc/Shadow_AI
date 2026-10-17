@@ -121,6 +121,14 @@ export function createApp() {
   const skipInTests = () => process.env.NODE_ENV === 'test';
 
   app.use('/api/events', rateLimit({ windowMs: 60_000, max: 100, standardHeaders: true, skip: skipInTests }));
+  // A public, unauthenticated endpoint is throttled more tightly than the rest
+  // of the auth surface to blunt email-enumeration and spam attempts.
+  app.use('/api/auth/access-request', rateLimit({
+    windowMs: 60_000,
+    max: 5,
+    standardHeaders: true,
+    skip: skipInTests,
+  }));
   app.use('/api/auth', rateLimit({
     windowMs: 60_000,
     max: 20,

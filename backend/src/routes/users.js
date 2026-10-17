@@ -15,7 +15,7 @@
 import { Router } from 'express';
 import bcrypt from 'bcryptjs';
 import { z } from 'zod';
-import { User, Event } from '../models/index.js';
+import { AccessRequest, AuditLog, User, Event } from '../models/index.js';
 import { requireRole, requireTenantAccess } from '../middleware/auth.js';
 import { revokeWebSocketUser } from '../services/websocket.js';
 import logger from '../utils/logger.js';
@@ -34,7 +34,14 @@ const CreateUserSchema = z.object({
   role:       z.enum(['admin', 'manager', 'viewer']).default('viewer'),
   department: z.string().max(100).optional().default(''),
   extensionUserId: z.string().max(64).optional(),
+  // When false the account is provisioned but inactive until approved.
+  activate:   z.boolean().optional().default(true),
 });
+
+const AccessReviewSchema = z.object({
+  password: z.string().min(8).max(128).optional(),
+  note: z.string().trim().max(500).optional(),
+}).strict();
 
 const UpdateUserSchema = z.object({
   name:       z.string().min(1).max(100).optional(),
@@ -118,6 +125,137 @@ router.get('/departments', requireRole('admin', 'manager'), async (req, res) => 
   res.json({ departments: departments.sort() });
 });
 
+// ─── Developer access requests  ───────────────────────────────────────────────
+// Provisioned-but-inactive developers ask to be activated; their tenant
+// administrator reviews the request. Always scoped to the caller's tenant.
+
+function serializeDeveloperAccessRequest(request, user) {
+  return {
+    id: request._id,
+    status: request.status,
+    email: request.email,
+    userId: request.userId,
+    name: user?.name ?? null,
+    role: user?.role ?? null,
+    hasPassword: Boolean(user?.passwordHash),
+    requestedAt: request.requestedAt ?? null,
+    reviewedBy: request.reviewedBy ?? null,
+    reviewedAt: request.reviewedAt ?? null,
+    reviewNote: request.reviewNote ?? '',
+  };
+}
+
+router.get('/access-requests', requireRole('admin'), async (req, res) => {
+  try {
+    const filter = { orgId: req.user.orgId, scope: 'developer' };
+    if (['pending', 'approved', 'rejected'].includes(req.query.status)) filter.status = req.query.status;
+
+    const requests = await AccessRequest.find(filter).sort({ requestedAt: -1 }).limit(200).lean();
+    const userIds = requests.filter(r => r.userId).map(r => r.userId);
+    const users = userIds.length ? await User.find({ _id: { $in: userIds } }).lean() : [];
+    const userMap = new Map(users.map(u => [String(u._id), u]));
+
+    return res.json({
+      requests: requests.map(r => serializeDeveloperAccessRequest(r, r.userId ? userMap.get(String(r.userId)) : null)),
+    });
+  } catch (err) {
+    logger.error('GET /users/access-requests error', err);
+    return res.status(500).json({ error: 'Internal error' });
+  }
+});
+
+router.post('/access-requests/:id/approve', requireRole('admin'), async (req, res) => {
+  const parsed = AccessReviewSchema.safeParse(req.body ?? {});
+  if (!parsed.success) return res.status(400).json({ error: 'Invalid access review' });
+
+  try {
+    const request = await AccessRequest.findOne({ _id: req.params.id, orgId: req.user.orgId, scope: 'developer' });
+    if (!request) return res.status(404).json({ error: 'Access request not found' });
+    if (request.status !== 'pending') return res.status(409).json({ error: 'Access request already reviewed' });
+
+    const user = request.userId
+      ? await User.findOne({ _id: request.userId, orgId: req.user.orgId })
+      : null;
+    if (!user) return res.status(409).json({ error: 'Requested account no longer exists' });
+    if (!user.passwordHash && !parsed.data.password) {
+      return res.status(400).json({ error: 'A password is required to activate this account' });
+    }
+
+    const now = new Date();
+    const claimed = await AccessRequest.findOneAndUpdate(
+      { _id: request._id, status: 'pending' },
+      { $set: { status: 'approved', reviewedBy: String(req.user.userId), reviewedAt: now, reviewNote: parsed.data.note ?? '' } },
+      { new: true }
+    );
+    if (!claimed) return res.status(409).json({ error: 'Access request already reviewed' });
+
+    const update = { $set: {} };
+    if (parsed.data.password) update.$set.passwordHash = await bcrypt.hash(parsed.data.password, 12);
+    if (!user.isActive) update.$set.isActive = true;
+    const activated = Object.keys(update.$set).length > 0
+      ? await User.findOneAndUpdate(
+        { _id: user._id, orgId: req.user.orgId },
+        { ...update, $inc: { authVersion: 1 } },
+        { new: true }
+      )
+      : user;
+    if (!activated) {
+      await AccessRequest.updateOne(
+        { _id: claimed._id },
+        { $set: { status: 'pending', reviewedBy: null, reviewedAt: null, reviewNote: '' } }
+      );
+      return res.status(409).json({ error: 'Account could not be activated' });
+    }
+
+    await AuditLog.create({
+      orgId: req.user.orgId,
+      action: 'developer_access_approved',
+      actor: req.user.userId,
+      target: String(user._id),
+      changes: { email: request.email, passwordProvisioned: Boolean(parsed.data.password) },
+      ip: req.ip,
+      userAgent: req.headers['user-agent'],
+    });
+
+    return res.json({ id: claimed._id, status: 'approved', email: request.email });
+  } catch (err) {
+    logger.error('POST /users/access-requests/:id/approve error', err);
+    return res.status(500).json({ error: 'Internal error' });
+  }
+});
+
+router.post('/access-requests/:id/reject', requireRole('admin'), async (req, res) => {
+  const parsed = AccessReviewSchema.safeParse(req.body ?? {});
+  if (!parsed.success) return res.status(400).json({ error: 'Invalid access review' });
+
+  try {
+    const request = await AccessRequest.findOne({ _id: req.params.id, orgId: req.user.orgId, scope: 'developer' });
+    if (!request) return res.status(404).json({ error: 'Access request not found' });
+
+    const reviewed = await AccessRequest.findOneAndUpdate(
+      { _id: request._id, status: 'pending' },
+      { $set: { status: 'rejected', reviewedBy: String(req.user.userId), reviewedAt: new Date(), reviewNote: parsed.data.note ?? '' } },
+      { new: true }
+    );
+    if (!reviewed) return res.status(409).json({ error: 'Access request already reviewed' });
+
+    await AuditLog.create({
+      orgId: req.user.orgId,
+      action: 'developer_access_rejected',
+      actor: req.user.userId,
+      target: request.email,
+      changes: { note: parsed.data.note ?? '' },
+      ip: req.ip,
+      userAgent: req.headers['user-agent'],
+    });
+
+    return res.json({ id: reviewed._id, status: 'rejected' });
+  } catch (err) {
+    logger.error('POST /users/access-requests/:id/reject error', err);
+    return res.status(500).json({ error: 'Internal error' });
+  }
+});
+
 // ─── GET /api/users/:id  ──────────────────────────────────────────────────────
 // Single user profile with recent event history
 
@@ -168,8 +306,8 @@ router.post('/', requireRole('admin'), async (req, res) => {
     if (exists) return res.status(409).json({ error: 'Email already registered' });
 
     const passwordHash = await bcrypt.hash(data.password, 12);
-    const { password: _, ...rest } = data;       // strip plaintext password
-    const user = await User.create({ ...rest, orgId: req.user.orgId, passwordHash });
+    const { password: _, activate, ...rest } = data;       // strip plaintext password
+    const user = await User.create({ ...rest, orgId: req.user.orgId, passwordHash, isActive: activate });
 
     logger.info(`User created: ${user.email} by admin ${req.user.userId}`);
     res.status(201).json({

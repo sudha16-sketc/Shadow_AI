@@ -94,6 +94,12 @@ export default function PlatformLogin() {
             Use the tenant login
           </Link>
         </p>
+        <p className="mt-2 text-xs text-gray-500">
+          Provisioned but not active?{' '}
+          <Link to="/request-access" className="text-gray-300 hover:text-white underline">
+            Request access
+          </Link>
+        </p>
       </div>
     </div>
   );

@@ -164,6 +164,12 @@ const Signup = ({ initialLogin = false }) => {
               Use the platform console
             </a>
           </p>
+          <p style={{ marginTop: '0.5rem', fontSize: '0.75rem' }}>
+            Provisioned but not active?{" "}
+            <a href="/request-access" style={{ textDecoration: "underline" }}>
+              Request access
+            </a>
+          </p>
         </div>
       </div>
 

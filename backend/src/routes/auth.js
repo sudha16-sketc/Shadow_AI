@@ -7,7 +7,7 @@ import bcrypt from "bcryptjs";
 import jwt from "jsonwebtoken";
 import { z } from 'zod';
 import { JWT_SECRET } from "../config/security.js";
-import { Device, Org, User } from "../models/index.js";
+import { AccessRequest, AuditLog, Device, Org, TenantInvitation, User } from "../models/index.js";
 import { authMiddleware, requireRole, requireUserAuth } from "../middleware/auth.js";
 import { issueWebSocketTicket, revokeWebSocketUser } from '../services/websocket.js';
 import { createDeviceCredential, createDeviceId, createEnrollmentCode, hashDeviceCredential } from '../utils/device-credentials.js';
@@ -24,6 +24,12 @@ const LoginSchema = z.object({
 }).strict();
 const EnrollmentSchema = z.object({ label: z.string().trim().min(1).max(100).optional() }).strict();
 const RegistrationSchema = z.object({ code: z.string().min(32).max(128) }).strict();
+const AccessRequestSchema = z.object({ email: z.string().trim().email().max(254) }).strict();
+// Identical acknowledgement for every outcome so the endpoint never reveals
+// whether an account exists or is eligible for activation.
+const ACCESS_REQUEST_ACK = {
+  message: 'If a provisioned account matches that email, an access request has been recorded.',
+};
 
 // POST /api/auth/login
 router.post("/login", async (req, res) => {
@@ -89,6 +95,61 @@ router.post("/login", async (req, res) => {
 
 router.post("/signup", async (req, res) => {
   return res.status(403).json({ error: 'Account enrollment requires an organization invitation' });
+});
+
+// POST /api/auth/access-request
+// A provisioned-but-inactive account asks to be activated. The reviewer scope
+// (platform for tenant admins, the tenant's own admin for everyone else) and
+// the tenant are always derived from the matching account record — never from
+// the request body — so a caller cannot target another tenant or escalate.
+router.post('/access-request', async (req, res) => {
+  const parsed = AccessRequestSchema.safeParse(req.body);
+  if (!parsed.success) return res.status(400).json({ error: 'A valid email address is required' });
+
+  try {
+    const email = parsed.data.email.toLowerCase();
+    const user = await User.findOne({ email });
+    let target = null;
+    if (user && user.orgId && user.isActive === false) {
+      // An existing inactive account (a developer, or a returning administrator).
+      target = {
+        scope: user.role === 'admin' ? 'tenant_admin' : 'developer',
+        orgId: user.orgId,
+        userId: user._id,
+      };
+    } else if (!user) {
+      // A first-time tenant administrator is still identified by their pending
+      // invitation; the account itself is created at approval time.
+      const invitation = await TenantInvitation.findOne({
+        email, status: 'pending', usedAt: null, expiresAt: { $gt: new Date() },
+      });
+      if (invitation) target = { scope: 'tenant_admin', orgId: invitation.orgId, userId: null };
+    }
+
+    if (target) {
+      const existing = await AccessRequest.findOne({ orgId: target.orgId, email, status: 'pending' });
+      if (!existing) {
+        await AccessRequest.create({
+          ...target,
+          email,
+          status: 'pending',
+          requestedAt: new Date(),
+        });
+        await AuditLog.create({
+          orgId: target.orgId,
+          action: 'access_requested',
+          actor: target.userId ?? null,
+          target: email,
+          changes: { scope: target.scope },
+          ip: req.ip,
+          userAgent: req.headers['user-agent'],
+        });
+      }
+    }
+    return res.status(202).json(ACCESS_REQUEST_ACK);
+  } catch {
+    return res.status(500).json({ error: 'Access request could not be processed' });
+  }
 });
 
 router.get('/check-auth', authMiddleware, requireUserAuth, (req, res) => {

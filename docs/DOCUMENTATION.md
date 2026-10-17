@@ -415,12 +415,39 @@ disabled (403).
 operator   → npm run provision:platform-admin   (PLATFORM_ADMIN_EMAIL/PASSWORD)
 platform   → POST /api/platform-admin/auth/login
            → POST /api/platform-admin/tenants                    → tenant + invitation (24h, single use)
+             (or supply adminPassword to activate the tenant and its first admin immediately)
            → POST /api/platform-admin/tenants/:id/invitations    → re-issue/replace invite
 invitee    → POST /api/platform-admin/invitations/accept         → tenant active + first admin
 admin      → dashboard: create users, pair devices, set policy
 user       → POST /api/auth/login → POST /api/auth/device/enrollment-code
 extension  → POST /api/auth/device/register  (one-time pairing code)
 ```
+
+**Access-approval fallback.** An account can be *provisioned but inactive*:
+a tenant administrator created without an invitation acceptance (or an invited
+administrator whose invite was not used) and a developer created with
+`activate: false`. Such a user asks to be activated from the public
+`/request-access` page (or the login/signup screens):
+
+```
+requester  → POST /api/auth/access-request { email }   → 202 generic ack
+             (a pending request is recorded only if the email matches an
+              inactive account or a pending invitation; the response never
+              reveals which)
+platform   → GET  /api/platform-admin/access-requests            (any platform role)
+           → POST /api/platform-admin/access-requests/:id/approve   (super_admin; password only if no credential exists)
+           → POST /api/platform-admin/access-requests/:id/reject    (super_admin)
+tenant adm → GET  /api/users/access-requests                     (admin)
+           → POST /api/users/access-requests/:id/approve         (admin; password only if no credential exists)
+           → POST /api/users/access-requests/:id/reject          (admin)
+```
+
+Scope is derived from the matched account, never the caller: an inactive
+administrator (or a pending invitation) produces a `tenant_admin` request
+reviewed by the platform; any other inactive account produces a `developer`
+request reviewed by that account's own tenant administrator. Approval activates
+the user and, for `tenant_admin`, the tenant; it bumps `authVersion` so any
+prior tokens are revoked.
 
 ### 8.5 Real-time alerts
 
@@ -446,6 +473,7 @@ Tickets live in process memory: single-instance only.
 |---|---|---|---|
 | POST | `/login` | none | Tenant user login; returns JWT + user |
 | POST | `/signup` | none | Disabled — returns 403 |
+| POST | `/access-request` | none | Request activation of a provisioned-but-inactive account (202, generic ack) |
 | GET | `/check-auth` | user JWT | Validate session, return current user |
 | POST | `/logout` | user JWT | Bump `authVersion` to revoke tokens |
 | POST | `/device/enrollment-code` | user JWT | Issue one-time device pairing code |
@@ -468,8 +496,11 @@ Tickets live in process memory: single-instance only.
 |---|---|---|---|
 | GET | `/` | admin, manager | List users |
 | GET | `/departments` | admin, manager | List department names |
+| GET | `/access-requests` | admin | List this tenant's developer access requests |
+| POST | `/access-requests/:id/approve` | admin | Approve a developer request (activate account) |
+| POST | `/access-requests/:id/reject` | admin | Reject a developer request |
 | GET | `/:id` | admin, manager | Get a user |
-| POST | `/` | admin | Create a user |
+| POST | `/` | admin | Create a user (`activate: false` provisions an inactive account) |
 | PATCH | `/:id` | admin | Update a user |
 | PATCH | `/:id/password` | admin | Reset a user's password |
 | PATCH | `/:id/opt-out` | self or admin | Toggle opt-out |
@@ -543,7 +574,10 @@ prefix `/gateway/v1` is mounted with `authMiddleware` in `backend/src/app.js`.
 | POST | `/auth/login` | none | Platform admin login (15-min token) |
 | POST | `/invitations/accept` | invitation token | Activate tenant + create first admin |
 | GET | `/tenants` | platform admin | List tenants |
-| POST | `/tenants` | `super_admin` | Create a tenant + invitation |
+| POST | `/tenants` | `super_admin` | Create a tenant + invitation (or activate immediately with `adminPassword`) |
+| GET | `/access-requests` | platform admin | List tenant-administrator access requests |
+| POST | `/access-requests/:id/approve` | `super_admin` | Approve a tenant-administrator request (activate tenant + admin) |
+| POST | `/access-requests/:id/reject` | `super_admin` | Reject a tenant-administrator request |
 | POST | `/tenants/:tenantId/invitations` | `super_admin` | Re-issue/replace an invitation |
 | PATCH | `/tenants/:tenantId/status` | `super_admin` | Activate/suspend a tenant |
 
@@ -579,16 +613,15 @@ All routes are `super_admin` only (enforced by `requirePlatformRole`).
 | GET | `/health` | Liveness; `{"status":"ok", …}` |
 | GET | `/ready` | Readiness; `{"status":"ready"}` once Mongo is connected |
 
-**Route count:** 65 route handlers across `backend/src/routes/` (verified by
+**Route count:** 72 route handlers across `backend/src/routes/` (verified by
 inspection of router definitions).
 
-> **Frontend routing note (known inconsistency):** `frontend/src/App.jsx` imports
-> `AuditLogPage` and `JustificationsPage` (lines 11–12) and
-> `frontend/src/components/Layout.jsx` links to `/justifications` and
-> `/audit-log`, but neither component is registered as a route under the `/`
-> layout. Those links resolve to the parent layout with an empty outlet. The
-> pages exist (`frontend/src/pages/AuditLog.jsx`, `Justifications.jsx`) but are
-> currently unreachable via the router.
+> **Frontend routing note:** `frontend/src/App.jsx` registers `AuditLogPage`
+> (`/audit-log`) and `JustificationsPage` (`/justifications`) under the tenant
+> `Layout`, and the public `RequestAccess` page at `/request-access`. The
+> access-approval UI is surfaced in `PlatformAdmin.jsx` (tenant-administrator
+> requests) and `Users.jsx` (developer requests), with links from the login and
+> signup screens.
 
 ---
 
@@ -610,6 +643,7 @@ MongoDB database with tenant isolation enforced by query scoping.
 | `auditlogs` | `AuditLog` | Admin/manager actions + gateway findings | actor, target, changes, ip, userAgent |
 | `platformadmins` | `PlatformAdmin` | Platform operators | `role` (`super_admin`/`manager`) |
 | `tenantinvitations` | `TenantInvitation` | Single-use invites | 24h TTL |
+| `accessrequests` | `AccessRequest` | Tenant-admin/developer activation requests | `scope` (`tenant_admin`/`developer`), `orgId`, `userId` (nullable), `email`, `status` (`pending`/`approved`/`rejected`), `reviewedBy`, `reviewedAt`, `reviewNote`, `requestedAt`; unique partial index on `{scope, orgId, email}` where `status: pending` |
 | `platformauditlogs` | `PlatformAuditLog` | Platform-plane audit | actor, action, target |
 | `authevents` | `AuthEvent` | Login/auth telemetry | TTL 30 days |
 
@@ -682,6 +716,13 @@ capped at 100. Severity thresholds: ≥90 CRITICAL, ≥70 HIGH, ≥40 MEDIUM.
   the credential is stored as a hash and is revocable per device.
 - **WebSocket auth:** short-lived single-use tickets (20s) bound to one user and
   org.
+- **Access approval:** a provisioned-but-inactive account (or a pending
+  invitation) is activated only by an authorised reviewer. The public
+  `POST /api/auth/access-request` endpoint records a request keyed to the matched
+  account's `orgId`/`scope` — never the caller's input — and always returns the
+  same 202 acknowledgement, so it cannot be used to enumerate accounts. Tenant
+  administrators review `developer` requests; platform `super_admin`s review
+  `tenant_admin` requests. The endpoint is rate-limited to 5 requests/minute.
 
 ### 12.2 Controls (implemented and tested)
 
@@ -700,6 +741,10 @@ capped at 100. Severity thresholds: ≥90 CRITICAL, ≥70 HIGH, ≥40 MEDIUM.
 - SSRF guard on Slack webhooks (HTTPS only, private/metadata hosts rejected).
 - CSV formula injection neutralised; pagination, date windows, and regex inputs
   bounded.
+- Access-approval review is role-gated (`super_admin` platform / `admin` tenant),
+  tenant-scoped, single-use (a second review returns 409), and requires a
+  credential only when the target account has none; approvals bump
+  `authVersion`.
 
 ### 12.3 Deliberately not implemented
 
@@ -739,7 +784,7 @@ calls rather than assuming it (`backend/tests/helpers/mock-app.js`).
 
 | Suite | Command | Result |
 |---|---|---|
-| Backend | `npm test` | **10 suites: 9 passed, 1 failed. 131 passed, 1 failed.** |
+| Backend | `npm test` | **11 suites: 10 passed, 1 failed. 157 passed, 1 failed.** |
 | Extension | `npm run test:config` | **25 passed, 0 failed** |
 
 The single failing backend suite is
@@ -764,6 +809,7 @@ behaviour was not masked; the assertion is unchanged.
 | `backend/tests/schema-contract.test.js` | Enum/contract guarantees |
 | `backend/tests/security-regression.test.js` | Regression baseline (e.g. "gateway trusts only server-side decisions") |
 | `backend/tests/auth-login.test.js` | Login flow |
+| `backend/tests/access-approval.test.js` | Access-request workflow, review gating, tenant isolation |
 | `backend/tests/provision-platform-admin.test.js` | Platform admin bootstrap |
 | `backend/tests/graceful-shutdown.integration.test.js` | Shutdown drain (environmentally failing, see above) |
 

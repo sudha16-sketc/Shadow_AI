@@ -36,6 +36,7 @@ export const state = {
   justifications: [],
   policies: [],
   authEvents: [],
+  accessRequests: [],
 };
 
 export function resetState() {
@@ -149,6 +150,7 @@ export const TenantInvitation = model(state.invitations, 'TenantInvitation');
 export const PlatformAuditLog = model(state.platformAudits, 'PlatformAuditLog');
 export const Justification = model(state.justifications, 'Justification');
 export const AuthEvent = model(state.authEvents, 'AuthEvent');
+export const AccessRequest = model(state.accessRequests, 'AccessRequest');
 
 // Policies are seeded directly by tests; the query shape is intentionally loose.
 export const Policy = {
@@ -164,7 +166,7 @@ const srcUrl = (relativePath) => fileURLToPath(new URL(relativePath, import.meta
 
 jest.unstable_mockModule(srcUrl('../../src/models/index.js'), () => ({
   User, Org, Device, Event, EventReplay, Justification,
-  AuditLog, PlatformAdmin, TenantInvitation, PlatformAuditLog, AuthEvent,
+  AuditLog, PlatformAdmin, TenantInvitation, PlatformAuditLog, AuthEvent, AccessRequest,
   Team: {}, Policy,
 }));
 

@@ -1,6 +1,6 @@
 import { useEffect, useState, useCallback } from 'react';
 import { format } from 'date-fns';
-import { useApi } from '../hooks/useAuth';
+import { useApi, useAuthStore } from '../hooks/useAuth';
 
 // ─── Sub-components ───────────────────────────────────────────────────────────
 
@@ -60,6 +60,7 @@ function UserModal({ user, onClose, onSaved }) {
     role:       user?.role       ?? 'viewer',
     department: user?.department ?? '',
     extensionUserId: user?.extensionUserId ?? '',
+    activate:   true,
   });
   const [error, setError] = useState('');
   const [saving, setSaving] = useState(false);
@@ -129,6 +130,24 @@ function UserModal({ user, onClose, onSaved }) {
             <input value={form.password} onChange={set('password')} type="password" placeholder="••••••••"
               className="w-full bg-white/[0.05] border border-white/10 rounded-xl px-3 py-2.5 text-sm text-white placeholder:text-gray-600 outline-none focus:border-white/20" />
           </div>
+
+          {/* Activation — only meaningful when creating */}
+          {!isEdit && (
+            <label className="flex items-start gap-2.5 cursor-pointer">
+              <input
+                type="checkbox"
+                checked={form.activate}
+                onChange={(e) => setForm(f => ({ ...f, activate: e.target.checked }))}
+                className="mt-0.5 accent-indigo-500"
+              />
+              <span className="text-xs text-gray-400">
+                Activate immediately
+                <span className="block text-[10px] text-gray-600">
+                  When off, the account stays inactive until an administrator approves its access request.
+                </span>
+              </span>
+            </label>
+          )}
 
           {/* Role + Department */}
           <div className="grid grid-cols-2 gap-3">
@@ -304,6 +323,8 @@ function UserDrawer({ userId, onClose }) {
 
 export default function UsersPage() {
   const api = useApi();
+  const currentUser = useAuthStore(s => s.user);
+  const isAdmin = (currentUser?.role ?? '') === 'admin';
   const [users, setUsers] = useState([]);
   const [total, setTotal] = useState(0);
   const [loading, setLoading] = useState(true);
@@ -316,6 +337,11 @@ export default function UsersPage() {
   const [editUser, setEditUser] = useState(null);
   const [drawerUserId, setDrawerUserId] = useState(null);
   const [confirmDelete, setConfirmDelete] = useState(null);
+  const [accessRequests, setAccessRequests] = useState([]);
+  const [reviewTarget, setReviewTarget] = useState(null);
+  const [reviewPassword, setReviewPassword] = useState('');
+  const [reviewError, setReviewError] = useState('');
+  const [reviewBusy, setReviewBusy] = useState(false);
   const LIMIT = 20;
 
   const loadUsers = useCallback(async () => {
@@ -335,14 +361,55 @@ export default function UsersPage() {
     }
   }, [page, search, roleFilter, deptFilter]);
 
+  const loadAccessRequests = useCallback(async () => {
+    if (!isAdmin) return;
+    try {
+      const data = await api('/api/users/access-requests?status=pending');
+      setAccessRequests(data.requests ?? []);
+    } catch (e) {
+      console.error(e);
+    }
+  }, [api, isAdmin]);
+
+  async function handleReviewApprove() {
+    if (!reviewTarget) return;
+    setReviewError('');
+    setReviewBusy(true);
+    try {
+      const body = reviewPassword ? { password: reviewPassword } : {};
+      await api(`/api/users/access-requests/${reviewTarget.id}/approve`, {
+        method: 'POST', body: JSON.stringify(body),
+      });
+      setReviewTarget(null);
+      setReviewPassword('');
+      await Promise.all([loadAccessRequests(), loadUsers()]);
+    } catch (e) {
+      setReviewError(e.message || 'Approval failed');
+    } finally {
+      setReviewBusy(false);
+    }
+  }
+
+  async function handleReviewReject(request) {
+    try {
+      await api(`/api/users/access-requests/${request.id}/reject`, {
+        method: 'POST', body: JSON.stringify({}),
+      });
+      loadAccessRequests();
+    } catch (e) {
+      console.error(e);
+    }
+  }
+
   useEffect(() => { loadUsers(); }, [loadUsers]);
   useEffect(() => { setPage(1); }, [search, roleFilter, deptFilter]);
+  useEffect(() => { loadAccessRequests(); }, [loadAccessRequests]);
 
   useEffect(() => {
     api('/api/users/departments')
       .then(d => setDepartments(d.departments))
       .catch(() => {});
-  }, []);
+  }, [api]);
 
   async function handleDeactivate(user) {
     try {
@@ -486,6 +553,52 @@ export default function UsersPage() {
         </table>
       </div>
 
+      {/* Developer access requests */}
+      {isAdmin && (
+        <div className="mt-8 rounded-xl border border-white/[0.07] overflow-hidden">
+          <div className="px-5 py-4 border-b border-white/[0.07]">
+            <h2 className="text-sm font-semibold text-white">Developer access requests</h2>
+            <p className="text-xs text-gray-500 mt-1">
+              Inactive accounts asking to be activated. Approving grants them access to this tenant.
+            </p>
+          </div>
+          {accessRequests.length === 0 ? (
+            <p className="px-5 py-6 text-xs text-gray-500">No pending access requests.</p>
+          ) : (
+            <ul className="divide-y divide-white/[0.04]">
+              {accessRequests.map((request) => (
+                <li key={request.id} className="px-5 py-3 flex items-center justify-between gap-4">
+                  <div className="min-w-0">
+                    <p className="text-xs text-gray-200 truncate">
+                      {request.name ? `${request.name} · ` : ''}{request.email}
+                      {request.role && <span className="text-gray-500"> ({request.role})</span>}
+                    </p>
+                    <p className="text-[10px] text-gray-500 truncate">
+                      requested {request.requestedAt ? new Date(request.requestedAt).toLocaleString() : '—'}
+                      {!request.hasPassword && ' · no credential set'}
+                    </p>
+                  </div>
+                  <div className="flex items-center gap-3 shrink-0">
+                    <button
+                      onClick={() => { setReviewError(''); setReviewPassword(''); setReviewTarget(request); }}
+                      className="text-xs text-green-400 hover:text-green-300"
+                    >
+                      Approve
+                    </button>
+                    <button
+                      onClick={() => handleReviewReject(request)}
+                      className="text-xs text-red-400 hover:text-red-300"
+                    >
+                      Reject
+                    </button>
+                  </div>
+                </li>
+              ))}
+            </ul>
+          )}
+        </div>
+      )}
+
       {/* Pagination */}
       {totalPages > 1 && (
         <div className="flex items-center justify-between mt-4">
@@ -536,6 +649,49 @@ export default function UsersPage() {
               <button onClick={() => handleDeactivate(confirmDelete)}
                 className="flex-1 bg-red-600 text-white text-sm py-2.5 rounded-xl hover:bg-red-500 transition-colors">
                 Deactivate
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Approve access request dialog */}
+      {reviewTarget && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center">
+          <div className="absolute inset-0 bg-black/60" onClick={() => setReviewTarget(null)} />
+          <div className="relative bg-gray-900 border border-white/10 rounded-2xl w-full max-w-sm p-6 shadow-2xl">
+            <h2 className="text-base font-semibold text-white mb-1">Approve access request</h2>
+            <p className="text-sm text-gray-400 mb-4">
+              Activate <span className="font-medium text-white">{reviewTarget.email}</span> for this tenant.
+            </p>
+            {!reviewTarget.hasPassword && (
+              <div className="mb-3">
+                <label className="block text-xs text-gray-400 mb-1.5">Set a password</label>
+                <input
+                  type="password"
+                  minLength={8}
+                  value={reviewPassword}
+                  onChange={(e) => setReviewPassword(e.target.value)}
+                  placeholder="Minimum 8 characters"
+                  className="w-full bg-white/[0.05] border border-white/10 rounded-xl px-3 py-2.5 text-sm text-white placeholder:text-gray-600 outline-none focus:border-white/20"
+                />
+              </div>
+            )}
+            {reviewError && (
+              <div className="mb-3 bg-red-500/10 border border-red-500/20 rounded-lg px-3 py-2 text-sm text-red-400">
+                {reviewError}
+              </div>
+            )}
+            <div className="flex gap-2">
+              <button onClick={() => setReviewTarget(null)}
+                className="flex-1 bg-white/[0.05] border border-white/10 text-gray-300 text-sm py-2.5 rounded-xl hover:bg-white/[0.09] transition-colors">
+                Cancel
+              </button>
+              <button
+                onClick={handleReviewApprove}
+                disabled={reviewBusy || (!reviewTarget.hasPassword && reviewPassword.length < 8)}
+                className="flex-1 bg-green-600 text-white text-sm py-2.5 rounded-xl hover:bg-green-500 transition-colors disabled:opacity-50">
+                {reviewBusy ? 'Working…' : 'Approve'}
               </button>
             </div>
           </div>
